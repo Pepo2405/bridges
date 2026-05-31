@@ -25,7 +25,7 @@ const wikilink: TokenizerAndRendererExtension = {
     if (m) return { type: "wikilink", raw: m[0], text: m[1] };
   },
   renderer(token) {
-    const raw = (token as { text: string }).text;
+    const raw = (token as unknown as { text: string }).text;
     const label = escapeHtml(linkAlias(raw));
     const dest = resolver(normalizeTarget(raw));
     if (dest) return `<a class="wikilink" data-doc-id="${escapeHtml(dest.id)}">${label}</a>`;
