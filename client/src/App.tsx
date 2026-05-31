@@ -17,6 +17,8 @@ import {
   X,
   ChevronsUpDown,
   KeyRound,
+  Sun,
+  Moon,
 } from "lucide-solid";
 import {
   state,
@@ -48,6 +50,8 @@ import { Backlinks } from "~/components/Backlinks";
 import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { TokenManager } from "~/components/TokenManager";
 import { MarkdownEditor } from "~/components/MarkdownEditor";
+import { ConfirmHost } from "~/components/ConfirmHost";
+import { askConfirm } from "~/lib/confirm";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Tooltip, TooltipTrigger, TooltipContent } from "~/components/ui/tooltip";
@@ -59,6 +63,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "~/components/ui/dialog";
+import { theme, toggleTheme } from "~/lib/theme";
 import { cn } from "~/lib/utils";
 
 function vaultName(path: string): string {
@@ -473,8 +478,8 @@ const App: Component = () => {
     });
   });
 
-  const select = (id: string) => {
-    if (dirty() && !confirm("Tenés cambios sin guardar. ¿Descartarlos?")) return;
+  const select = async (id: string) => {
+    if (dirty() && !(await askConfirm({ title: "Cambios sin guardar", description: "Si seguís, se descartan los cambios de esta nota.", confirmText: "Descartar", destructive: true }))) return;
     setSelectedId(id);
     setQuery("");
     setHits([]);
@@ -504,7 +509,7 @@ const App: Component = () => {
   const onDelete = async () => {
     const doc = current();
     if (!doc) return;
-    if (!confirm(`¿Eliminar "${doc.path}"? Se borra para todo el equipo.`)) return;
+    if (!(await askConfirm({ title: "Eliminar nota", description: `"${doc.path}" se borra para todo el equipo.`, confirmText: "Eliminar", destructive: true }))) return;
     await deleteDoc(doc.id, state.author);
     setSelectedId(null);
   };
@@ -516,19 +521,19 @@ const App: Component = () => {
   };
 
   // Operaciones de archivos desde el árbol.
-  const onTreeAction = (action: TreeAction, node: TreeNode) => {
+  const onTreeAction = async (action: TreeAction, node: TreeNode) => {
     if (action === "rename") setRenameTarget({ kind: "file", path: node.path, docId: node.docId });
     else if (action === "rename-folder") setRenameTarget({ kind: "folder", path: node.path });
     else if (action === "new-in-folder") {
       setNewPrefill(node.path + "/");
       setShowNew(true);
     } else if (action === "delete") {
-      if (!confirm(`¿Eliminar "${node.path}"? Se borra para todo el equipo.`)) return;
+      if (!(await askConfirm({ title: "Eliminar nota", description: `"${node.path}" se borra para todo el equipo.`, confirmText: "Eliminar", destructive: true }))) return;
       deleteDoc(node.docId!, state.author);
       if (selectedId() === node.docId) setSelectedId(null);
     } else if (action === "delete-folder") {
       const count = docs().filter((d) => d.path.startsWith(node.path + "/")).length;
-      if (!confirm(`¿Eliminar la carpeta "${node.path}" y sus ${count} nota${count === 1 ? "" : "s"}? Se borra para todo el equipo.`)) return;
+      if (!(await askConfirm({ title: "Eliminar carpeta", description: `"${node.path}" y sus ${count} nota${count === 1 ? "" : "s"} se borran para todo el equipo.`, confirmText: "Eliminar", destructive: true }))) return;
       deleteFolder(node.path);
       const sel = selectedId();
       if (sel && state.docs[sel]?.path.startsWith(node.path + "/")) setSelectedId(null);
@@ -657,6 +662,14 @@ const App: Component = () => {
               </span>
             </Show>
             <SyncStatus />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={toggleTheme}
+              title={theme() === "dark" ? "Tema claro" : "Tema oscuro"}
+            >
+              {theme() === "dark" ? <Sun class="h-4 w-4" /> : <Moon class="h-4 w-4" />}
+            </Button>
             <Show when={!state.authEnabled || state.role === "admin"}>
               <Button size="sm" variant="ghost" onClick={() => setShowTokens(true)} title="API keys">
                 <KeyRound class="h-4 w-4" />
@@ -856,6 +869,7 @@ const App: Component = () => {
 
       <NewDocDialog open={showNew()} initial={newPrefill()} onOpenChange={setShowNew} onCreate={onCreate} />
       <TokenManager open={showTokens()} onOpenChange={setShowTokens} />
+      <ConfirmHost />
       <RenameDialog target={renameTarget()} onClose={() => setRenameTarget(null)} onSubmit={onRenameSubmit} />
       <ConflictDialog
         conflict={conflict()}
