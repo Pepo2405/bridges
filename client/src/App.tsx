@@ -16,6 +16,7 @@ import {
   Info,
   X,
   ChevronsUpDown,
+  KeyRound,
 } from "lucide-solid";
 import {
   state,
@@ -43,6 +44,7 @@ import type { TreeNode } from "~/lib/markdown";
 import { GraphView } from "~/components/GraphView";
 import { Backlinks } from "~/components/Backlinks";
 import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
+import { TokenManager } from "~/components/TokenManager";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Tooltip, TooltipTrigger, TooltipContent } from "~/components/ui/tooltip";
@@ -341,6 +343,7 @@ const App: Component = () => {
   const [saving, setSaving] = createSignal(false);
   const [conflict, setConflict] = createSignal<Conflict | null>(null);
   const [showNew, setShowNew] = createSignal(false);
+  const [showTokens, setShowTokens] = createSignal(false);
   const [newPrefill, setNewPrefill] = createSignal("");
   const [renameTarget, setRenameTarget] = createSignal<RenameTarget | null>(null);
   const [showPreview, setShowPreview] = createSignal(true);
@@ -562,7 +565,20 @@ const App: Component = () => {
             </button>
           </div>
           <div class="ml-auto flex items-center gap-3">
+            <Show when={state.authEnabled && state.role}>
+              <span
+                class="rounded-full border px-2 py-0.5 text-xs capitalize text-muted-foreground"
+                title="Tu rol en este vault"
+              >
+                {state.role}
+              </span>
+            </Show>
             <SyncStatus />
+            <Show when={!state.authEnabled || state.role === "admin"}>
+              <Button size="sm" variant="ghost" onClick={() => setShowTokens(true)} title="API keys">
+                <KeyRound class="h-4 w-4" />
+              </Button>
+            </Show>
             <Button size="sm" variant="ghost" onClick={() => pull()} title="Sincronizar ahora">
               <RefreshCw class="h-4 w-4" />
             </Button>
@@ -743,6 +759,7 @@ const App: Component = () => {
       </div>
 
       <NewDocDialog open={showNew()} initial={newPrefill()} onOpenChange={setShowNew} onCreate={onCreate} />
+      <TokenManager open={showTokens()} onOpenChange={setShowTokens} />
       <RenameDialog target={renameTarget()} onClose={() => setRenameTarget(null)} onSubmit={onRenameSubmit} />
       <ConflictDialog
         conflict={conflict()}

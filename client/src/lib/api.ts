@@ -12,6 +12,7 @@ export type Doc = {
 
 export type SyncResponse = { documents: Doc[]; last_seq: number };
 export type SearchHit = { id: string; path: string; title: string | null; snippet: string };
+export type TokenInfo = { name: string; role: string; created_at: string };
 
 export type ConflictResult = { conflict: true; server: Doc };
 export type SaveResult = { ok: true; doc: Doc } | ConflictResult;
@@ -55,6 +56,31 @@ export class ForgeApi {
     const r = await fetch(this.url("/whoami"), { headers: this.headers() });
     if (!r.ok) throw new ApiError(r.status, `whoami ${r.status}`);
     return r.json();
+  }
+
+  async listTokens(): Promise<TokenInfo[]> {
+    const r = await fetch(this.url("/tokens"), { headers: this.headers() });
+    if (!r.ok) throw new ApiError(r.status, `tokens ${r.status}`);
+    return (await r.json()).tokens;
+  }
+
+  /** Crea un token y devuelve el secreto en claro (solo se ve una vez). */
+  async createToken(name: string, role: string): Promise<{ name: string; role: string; token: string }> {
+    const r = await fetch(this.url("/tokens"), {
+      method: "POST",
+      headers: this.headers({ "content-type": "application/json" }),
+      body: JSON.stringify({ name, role }),
+    });
+    if (!r.ok) throw new ApiError(r.status, `create token ${r.status}: ${await r.text()}`);
+    return r.json();
+  }
+
+  async revokeToken(name: string): Promise<void> {
+    const r = await fetch(this.url(`/tokens/${encodeURIComponent(name)}`), {
+      method: "DELETE",
+      headers: this.headers(),
+    });
+    if (!r.ok) throw new ApiError(r.status, `revoke token ${r.status}`);
   }
 
   async sync(since: number): Promise<SyncResponse> {

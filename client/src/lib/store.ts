@@ -34,6 +34,8 @@ type State = {
   error: string | null;
   notice: string | null; // aviso transitorio (p.ej. conflicto en sync de fondo)
   perms: { write: boolean; delete: boolean }; // permisos del token actual (gatea la UI)
+  role: string | null; // rol del token (viewer/editor/admin), null si no hay auth
+  authEnabled: boolean; // si el server pide token
 };
 
 /** Permisos según el rol del token. Sin auth, permisos plenos (el server igual valida). */
@@ -62,6 +64,8 @@ const [state, setState] = createStore<State>({
   error: null,
   notice: null,
   perms: { write: true, delete: true },
+  role: null,
+  authEnabled: false,
 });
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -152,9 +156,9 @@ export async function connect(opts: { vault: string; serverUrl?: string; token?:
   // (server viejo, red), asumimos permisos plenos; el server igual valida.
   try {
     const who = await api.whoami();
-    setState("perms", permsForRole(who.role, who.authEnabled));
+    setState({ perms: permsForRole(who.role, who.authEnabled), role: who.role, authEnabled: who.authEnabled });
   } catch {
-    setState("perms", { write: true, delete: true });
+    setState({ perms: { write: true, delete: true }, role: null, authEnabled: false });
   }
 
   setState("ready", true);
@@ -244,7 +248,7 @@ export function disconnect() {
   unwatch = null;
   for (const t of debounce.values()) clearTimeout(t);
   debounce.clear();
-  setState({ ready: false, vault: null, docs: {}, connected: false, perms: { write: true, delete: true } });
+  setState({ ready: false, vault: null, docs: {}, connected: false, perms: { write: true, delete: true }, role: null, authEnabled: false });
 }
 
 /** Elimina una conexión guardada. */

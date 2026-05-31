@@ -9,7 +9,18 @@ import {
 } from "./db";
 import { addClient, broadcastChange, clientCount } from "./events";
 import { searchDocs } from "./search";
-import { authEnabled, roleForToken, roleForRequest, roleCan, type Perm } from "./auth";
+import {
+  authEnabled,
+  roleForToken,
+  roleForRequest,
+  roleCan,
+  addToken,
+  listTokens,
+  revokeToken,
+  ROLES,
+  type Perm,
+  type Role,
+} from "./auth";
 
 const PORT = Number(process.env.PORT ?? 4321);
 
@@ -71,6 +82,42 @@ const server = Bun.serve({
     if (pathname === "/whoami" && req.method === "GET") {
       const enabled = authEnabled();
       return json({ authEnabled: enabled, role: enabled ? roleForRequest(req) : null });
+    }
+
+    // --- Gestión de tokens (API keys): solo admin ---
+    // checkAuth ya validó read/write/delete genérico; acá exigimos rol admin
+    // (un viewer tiene read y podría listar tokens si no lo bloqueáramos).
+    // Sin auth se permite: sirve para crear el primer token y arrancar la auth.
+    if (pathname === "/tokens" || pathname.startsWith("/tokens/")) {
+      if (authEnabled() && roleForRequest(req) !== "admin") return json({ error: "forbidden" }, 403);
+
+      if (pathname === "/tokens" && req.method === "GET") {
+        return json({ tokens: listTokens() });
+      }
+
+      if (pathname === "/tokens" && req.method === "POST") {
+        const body = await req.json().catch(() => null);
+        const name = typeof body?.name === "string" ? body.name.trim() : "";
+        const role = body?.role as Role;
+        if (!name || !ROLES.includes(role)) {
+          return json({ error: `name requerido y role en ${ROLES.join(" | ")}` }, 400);
+        }
+        try {
+          const token = addToken(name, role);
+          return json({ name, role, token }, 201); // el secreto se ve solo acá
+        } catch (e) {
+          // PRIMARY KEY (name) duplicado u otra constraint.
+          return json({ error: `no se pudo crear el token: ${String(e)}` }, 409);
+        }
+      }
+
+      const tokMatch = pathname.match(/^\/tokens\/(.+)$/);
+      if (tokMatch && req.method === "DELETE") {
+        const name = decodeURIComponent(tokMatch[1]);
+        return revokeToken(name) ? json({ ok: true }) : json({ error: "token no encontrado" }, 404);
+      }
+
+      return json({ error: "not found" }, 404);
     }
 
     // --- Pull incremental: GET /sync?since=<seq> ---
