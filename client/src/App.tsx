@@ -45,7 +45,6 @@ import { Backlinks } from "~/components/Backlinks";
 import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Skeleton } from "~/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -588,12 +587,18 @@ const App: Component = () => {
                 <Show
                   when={docs().length}
                   fallback={
-                    <div class="flex flex-col gap-2 p-2">
-                      <Skeleton class="h-6 w-full" />
-                      <Skeleton class="h-6 w-4/5" />
-                      <p class="mt-2 text-center text-xs text-muted-foreground">
-                        Vault vacío. Creá el primer documento.
-                      </p>
+                    <div class="flex flex-col items-center gap-3 px-2 py-8 text-center">
+                      <p class="text-sm text-muted-foreground">Vault vacío.</p>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setNewPrefill("");
+                          setShowNew(true);
+                        }}
+                      >
+                        <Plus class="h-4 w-4" />
+                        Crear primer documento
+                      </Button>
                     </div>
                   }
                 >
