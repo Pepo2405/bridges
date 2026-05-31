@@ -1,4 +1,4 @@
-import { type Component, type ParentProps, Show, For, createSignal, createMemo, createEffect, onMount, untrack } from "solid-js";
+import { type Component, type ParentProps, Show, For, createSignal, createMemo, createEffect, onMount, onCleanup, untrack } from "solid-js";
 import {
   Search,
   Plus,
@@ -52,6 +52,7 @@ import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { TokenManager } from "~/components/TokenManager";
 import { MarkdownEditor } from "~/components/MarkdownEditor";
 import { ConfirmHost } from "~/components/ConfirmHost";
+import { CommandPalette, type Command } from "~/components/CommandPalette";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -439,6 +440,7 @@ const App: Component = () => {
   const [conflict, setConflict] = createSignal<Conflict | null>(null);
   const [showNew, setShowNew] = createSignal(false);
   const [showTokens, setShowTokens] = createSignal(false);
+  const [showPalette, setShowPalette] = createSignal(false);
   const [newPrefill, setNewPrefill] = createSignal("");
   const [renameTarget, setRenameTarget] = createSignal<RenameTarget | null>(null);
   const [mode, setMode] = createSignal<"edit" | "preview">("edit");
@@ -625,9 +627,52 @@ const App: Component = () => {
     }
   };
 
+  // Comandos para la paleta (Cmd+K): acciones + abrir notas. Se lee en vivo.
+  const commands = (): Command[] => {
+    const cmds: Command[] = [];
+    if (state.perms.write)
+      cmds.push({ id: "new", label: "Nueva nota", group: "Acciones", run: () => (setNewPrefill(""), setShowNew(true)) });
+    if (current())
+      cmds.push({
+        id: "toggle-mode",
+        label: mode() === "edit" ? "Ver vista previa" : "Volver a editar",
+        group: "Acciones",
+        run: () => setMode(mode() === "edit" ? "preview" : "edit"),
+      });
+    cmds.push({
+      id: "view",
+      label: view() === "editor" ? "Ir al grafo" : "Ir al editor",
+      group: "Acciones",
+      run: () => setView(view() === "editor" ? "graph" : "editor"),
+    });
+    cmds.push({ id: "sync", label: "Sincronizar ahora", group: "Acciones", run: () => pull() });
+    cmds.push({ id: "theme", label: "Cambiar tema (claro/oscuro)", group: "Acciones", run: toggleTheme });
+    if (!state.authEnabled || state.role === "admin")
+      cmds.push({ id: "tokens", label: "API keys", group: "Acciones", run: () => setShowTokens(true) });
+    cmds.push({ id: "disconnect", label: "Cambiar de vault", group: "Acciones", run: disconnect });
+
+    for (const d of docs())
+      cmds.push({
+        id: `doc:${d.id}`,
+        label: displayName(d.path),
+        hint: d.path.includes("/") ? d.path.replace(/\/[^/]+$/, "") : undefined,
+        group: "Notas",
+        run: () => select(d.id),
+      });
+    return cmds;
+  };
+
   // Al arrancar: autoconectar a la última conexión usada (o mostrar el gestor).
   onMount(() => {
     boot();
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowPalette((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
   });
 
   return (
@@ -913,6 +958,7 @@ const App: Component = () => {
 
       <NewDocDialog open={showNew()} initial={newPrefill()} onOpenChange={setShowNew} onCreate={onCreate} />
       <TokenManager open={showTokens()} onOpenChange={setShowTokens} />
+      <CommandPalette open={showPalette()} onOpenChange={setShowPalette} commands={commands} />
       <ConfirmHost />
       <RenameDialog target={renameTarget()} onClose={() => setRenameTarget(null)} onSubmit={onRenameSubmit} />
       <ConflictDialog
