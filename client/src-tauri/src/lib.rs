@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,16 +8,41 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri_plugin_autostart::ManagerExt;
 
-/// Mantiene vivo el watcher del vault (si se dropea, deja de observar).
+/// Watchers vivos, uno por conexión (conn_id = path del vault). Dropear el valor
+/// detiene ese watcher sin tocar los demás.
 #[derive(Default)]
-struct WatcherState(Mutex<Option<RecommendedWatcher>>);
+struct WatcherState(Mutex<HashMap<String, RecommendedWatcher>>);
 
-/// Generación del stream SSE activo. Cada start incrementa el contador; el task
-/// en curso se detiene cuando ve que la generación cambió (reconexión/disconnect).
+/// Generación del stream SSE activo, por conexión. Cada start incrementa el
+/// contador de SU conn; el task en curso se detiene cuando ve que la generación
+/// cambió (reconexión/disconnect). Parar/reconectar una conn no toca las otras.
 #[derive(Default)]
-struct StreamState(Arc<AtomicU64>);
+struct StreamState(Mutex<HashMap<String, Arc<AtomicU64>>>);
+
+/// Payloads de eventos hacia el front: todos llevan `conn_id` para que un único
+/// listener global en JS los rutee a la sesión correcta.
+#[derive(Clone, Serialize)]
+struct VaultChange {
+    conn_id: String,
+    paths: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct ServerChange {
+    conn_id: String,
+    seq: i64,
+}
+
+#[derive(Clone, Serialize)]
+struct ServerStatus {
+    conn_id: String,
+    connected: bool,
+}
 
 #[derive(Serialize, Deserialize)]
 struct SyncState {
@@ -118,9 +144,15 @@ fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScannedDoc>) -> std::io::Resu
 /// Observa el vault y emite "vault-change" con las rutas .md afectadas (relativas).
 /// Ignora .forge/, .obsidian/ y cualquier componente que empiece con punto.
 #[tauri::command]
-fn start_watch(app: AppHandle, state: State<WatcherState>, vault: String) -> Result<(), String> {
+fn start_watch(
+    app: AppHandle,
+    state: State<WatcherState>,
+    conn_id: String,
+    vault: String,
+) -> Result<(), String> {
     let root = PathBuf::from(&vault);
     let root_cb = root.clone();
+    let conn = conn_id.clone();
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
@@ -144,7 +176,13 @@ fn start_watch(app: AppHandle, state: State<WatcherState>, vault: String) -> Res
             }
         }
         if !rels.is_empty() {
-            let _ = app.emit("vault-change", rels);
+            let _ = app.emit(
+                "vault-change",
+                VaultChange {
+                    conn_id: conn.clone(),
+                    paths: rels,
+                },
+            );
         }
     })
     .map_err(|e| e.to_string())?;
@@ -153,9 +191,15 @@ fn start_watch(app: AppHandle, state: State<WatcherState>, vault: String) -> Res
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
 
-    // reemplaza (y por ende dropea/detiene) cualquier watcher anterior
-    *state.0.lock().unwrap() = Some(watcher);
+    // reemplaza (y por ende dropea/detiene) cualquier watcher anterior de esta conn
+    state.0.lock().unwrap().insert(conn_id, watcher);
     Ok(())
+}
+
+/// Detiene el watcher de una conexión (dropea su entrada del mapa).
+#[tauri::command]
+fn stop_watch(state: State<WatcherState>, conn_id: String) {
+    state.0.lock().unwrap().remove(&conn_id);
 }
 
 fn state_path(vault: &str) -> PathBuf {
@@ -185,6 +229,30 @@ fn state_save(vault: String, last_seq: i64, server_url: String) -> Result<(), St
     fs::write(&p, json).map_err(|e| e.to_string())
 }
 
+fn index_path(vault: &str) -> PathBuf {
+    PathBuf::from(vault).join(".forge").join("index.json")
+}
+
+/// Índice de reconciliación offline (base del 3-way merge + cola de cambios sucios).
+/// El schema lo dueña el JS; acá es un blob opaco. Devuelve "" si no existe.
+#[tauri::command]
+fn index_load(vault: String) -> Result<String, String> {
+    Ok(fs::read_to_string(index_path(&vault)).unwrap_or_default())
+}
+
+/// Guarda el índice de forma atómica (write a .tmp + rename) para no corromperlo
+/// si la app muere a mitad de escritura.
+#[tauri::command]
+fn index_save(vault: String, data: String) -> Result<(), String> {
+    let p = index_path(&vault);
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = p.with_extension("json.tmp");
+    fs::write(&tmp, data).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &p).map_err(|e| e.to_string())
+}
+
 /// Config global de la app (lista de conexiones). Vive en el dir de config, no en un vault.
 fn config_file(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
@@ -206,20 +274,32 @@ fn config_save(app: AppHandle, data: String) -> Result<(), String> {
     fs::write(&p, data).map_err(|e| e.to_string())
 }
 
-/// Detiene el stream SSE actual (invalida su generación).
+/// Detiene el stream SSE de una conexión (invalida su generación).
 #[tauri::command]
-fn stop_event_stream(state: State<StreamState>) {
-    state.0.fetch_add(1, Ordering::SeqCst);
+fn stop_event_stream(state: State<StreamState>, conn_id: String) {
+    if let Some(g) = state.0.lock().unwrap().get(&conn_id) {
+        g.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 /// Abre `{server_url}/events` desde Rust (con `Authorization: Bearer`), parsea el
 /// SSE y emite eventos Tauri: `server-status` (bool conectado) y `server-change`
-/// (seq). Reconecta con backoff. Se hace en Rust porque el WKWebView no entrega
-/// respuestas long-lived al JS (ni con EventSource ni con fetch streaming).
+/// (seq), ambos con `conn_id`. Reconecta con backoff. Se hace en Rust porque el
+/// WKWebView no entrega respuestas long-lived al JS (ni con EventSource ni con
+/// fetch streaming). La generación es por conn: reconectar una no toca las otras.
 #[tauri::command]
-fn start_event_stream(app: AppHandle, state: State<StreamState>, server_url: String, token: String) {
-    let my_gen = state.0.fetch_add(1, Ordering::SeqCst) + 1;
-    let generation = state.0.clone();
+fn start_event_stream(
+    app: AppHandle,
+    state: State<StreamState>,
+    conn_id: String,
+    server_url: String,
+    token: String,
+) {
+    let generation = {
+        let mut map = state.0.lock().unwrap();
+        map.entry(conn_id.clone()).or_default().clone()
+    };
+    let my_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
     let url = format!("{}/events", server_url.trim_end_matches('/'));
 
     tauri::async_runtime::spawn(async move {
@@ -232,7 +312,13 @@ fn start_event_stream(app: AppHandle, state: State<StreamState>, server_url: Str
 
             match req.send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    let _ = app.emit("server-status", true);
+                    let _ = app.emit(
+                        "server-status",
+                        ServerStatus {
+                            conn_id: conn_id.clone(),
+                            connected: true,
+                        },
+                    );
                     let mut stream = resp.bytes_stream();
                     let mut buf = String::new();
                     while let Some(chunk) = stream.next().await {
@@ -251,7 +337,13 @@ fn start_event_stream(app: AppHandle, state: State<StreamState>, server_url: Str
                                 };
                                 if v.get("type").and_then(|t| t.as_str()) == Some("change") {
                                     if let Some(seq) = v.get("seq").and_then(|s| s.as_i64()) {
-                                        let _ = app.emit("server-change", seq);
+                                        let _ = app.emit(
+                                            "server-change",
+                                            ServerChange {
+                                                conn_id: conn_id.clone(),
+                                                seq,
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -266,15 +358,52 @@ fn start_event_stream(app: AppHandle, state: State<StreamState>, server_url: Str
             if generation.load(Ordering::SeqCst) != my_gen {
                 return;
             }
-            let _ = app.emit("server-status", false);
+            let _ = app.emit(
+                "server-status",
+                ServerStatus {
+                    conn_id: conn_id.clone(),
+                    connected: false,
+                },
+            );
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
     });
 }
 
+/// Muestra y enfoca la ventana principal (desde el tray o el single-instance).
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// ¿Está habilitado el arranque automático al login?
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Habilita/deshabilita el arranque automático al login (configurable desde la UI).
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let m = app.autolaunch();
+    if enabled { m.enable() } else { m.disable() }.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // single-instance va PRIMERO: si ya hay una corriendo, la segunda
+        // invocación solo enfoca la ventana existente y sale.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app);
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_dialog::init())
         .manage(WatcherState::default())
         .manage(StreamState::default())
@@ -284,13 +413,55 @@ pub fn run() {
             vault_read,
             vault_scan,
             start_watch,
+            stop_watch,
             state_load,
             state_save,
+            index_load,
+            index_save,
             config_load,
             config_save,
             start_event_stream,
-            stop_event_stream
+            stop_event_stream,
+            get_autostart,
+            set_autostart
         ])
+        .setup(|app| {
+            // System tray: menú Mostrar / Salir + click en el ícono para reabrir.
+            let show = MenuItem::with_id(app, "show", "Mostrar Forge", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("Forge")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_main(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+            Ok(())
+        })
+        // Cerrar la ventana (la X) la oculta a la bandeja en vez de terminar el
+        // proceso: así el SSE y el watcher siguen sincronizando en segundo plano.
+        // Salir de verdad: menú "Salir" del tray.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error al arrancar Forge");
 }

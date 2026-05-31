@@ -1,7 +1,7 @@
 import { type Component, For, Show, createSignal, createEffect } from "solid-js";
 import { FilePlus, Pencil, Trash2, RefreshCw, ChevronLeft, RotateCcw } from "lucide-solid";
 import { diffLines } from "diff";
-import { api } from "~/lib/store";
+import { activeApi } from "~/lib/store";
 import type { Change } from "~/lib/api";
 import { relativeTime } from "~/lib/time";
 import {
@@ -40,6 +40,8 @@ export const HistoryDialog: Component<{
     if (!id) return;
     setLoading(true);
     setItems([]);
+    const api = activeApi();
+    if (!api) return setLoading(false);
     api
       .history(id)
       .then(setItems)
@@ -53,7 +55,7 @@ export const HistoryDialog: Component<{
     setLoadingVer(true);
     setVerContent(null);
     try {
-      setVerContent(await api.version(props.docId, c.seq));
+      setVerContent((await activeApi()?.version(props.docId, c.seq)) ?? null);
     } catch {
       setVerContent(null);
     } finally {

@@ -1,6 +1,6 @@
 import { type Component, For, Show, createSignal, createEffect } from "solid-js";
 import { Key, Trash2, Copy, Check, RefreshCw, Plus } from "lucide-solid";
-import { api } from "~/lib/store";
+import { activeApi } from "~/lib/store";
 import type { TokenInfo } from "~/lib/api";
 import {
   Dialog,
@@ -29,6 +29,8 @@ export const TokenManager: Component<{ open: boolean; onOpenChange: (o: boolean)
     setLoading(true);
     setErr(null);
     try {
+      const api = activeApi();
+      if (!api) return;
       setTokens(await api.listTokens());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -54,6 +56,8 @@ export const TokenManager: Component<{ open: boolean; onOpenChange: (o: boolean)
     setBusy(true);
     setErr(null);
     try {
+      const api = activeApi();
+      if (!api) throw new Error("Sin sesión activa.");
       const res = await api.createToken(n, role());
       setSecret({ name: res.name, token: res.token });
       setName("");
@@ -68,6 +72,8 @@ export const TokenManager: Component<{ open: boolean; onOpenChange: (o: boolean)
   const revoke = async (n: string) => {
     if (!confirm(`¿Revocar el token "${n}"? Las apps que lo usen pierden acceso.`)) return;
     try {
+      const api = activeApi();
+      if (!api) return;
       await api.revokeToken(n);
       await load();
     } catch (e) {

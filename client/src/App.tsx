@@ -21,26 +21,27 @@ import {
   Moon,
   List,
   History,
+  Check,
 } from "lucide-solid";
 import {
   state,
+  active,
+  activeApi,
   docList,
   saveDoc,
   deleteDoc,
   moveDoc,
   renameFolder,
   deleteFolder,
-  pickVaultAndInspect,
-  importLocalDocs,
-  type VaultInspection,
   connect,
-  disconnect,
+  setActiveVault,
   removeConnection,
   boot,
   pull,
-  api,
   browserMode,
   setNotice,
+  resolveConflictKeepMine,
+  resolveConflictKeepServer,
 } from "~/lib/store";
 import { buildTree, renderMarkdown, setWikiResolver } from "~/lib/markdown";
 import { buildBacklinks, createResolver, displayName } from "~/lib/links";
@@ -55,6 +56,7 @@ import { MarkdownEditor } from "~/components/MarkdownEditor";
 import { ConfirmHost } from "~/components/ConfirmHost";
 import { CommandPalette, type Command } from "~/components/CommandPalette";
 import { HistoryDialog } from "~/components/HistoryDialog";
+import { AddVaultDialog } from "~/components/AddVaultDialog";
 import { relativeTime } from "~/lib/time";
 import {
   DropdownMenu,
@@ -75,11 +77,44 @@ import {
   DialogFooter,
 } from "~/components/ui/dialog";
 import { theme, toggleTheme } from "~/lib/theme";
+import { getAutostart, setAutostart } from "~/lib/tauri";
 import { cn } from "~/lib/utils";
 
 function vaultName(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
 }
+
+/** Texto del estado de sync de un vault para el switcher. */
+function vaultSyncLabel(vault: string): string {
+  const sess = state.sessions[vault];
+  if (!sess) return "sin abrir";
+  if (sess.syncing) return "sincronizando…";
+  const queued = sess.pending > 0 ? ` · ${sess.pending} en cola` : "";
+  if (!sess.online) return `offline${queued}`;
+  return `${sess.connected ? "en vivo" : "conectado"}${queued}`;
+}
+
+/** Punto de color (o spinner) con el estado de sync de un vault. */
+const VaultSyncDot: Component<{ vault: string }> = (props) => {
+  const sess = () => state.sessions[props.vault];
+  return (
+    <Show when={sess()} fallback={<span class="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40" />}>
+      <Show
+        when={sess()!.syncing}
+        fallback={
+          <span
+            class={cn(
+              "h-2 w-2 shrink-0 rounded-full",
+              !sess()!.online ? "bg-destructive" : sess()!.connected ? "bg-emerald-500" : "bg-amber-500",
+            )}
+          />
+        }
+      >
+        <RefreshCw class="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+      </Show>
+    </Show>
+  );
+};
 
 // Mensajes de permiso insuficiente (tooltip de los controles bloqueados).
 const NO_WRITE = "Tu token no tiene permiso de escritura en este vault.";
@@ -111,11 +146,24 @@ const BootSplash: Component = () => (
   </div>
 );
 
-const ConnectionManager: Component = () => {
-  const [serverUrl, setServerUrl] = createSignal(state.connections[0]?.serverUrl ?? state.serverUrl);
-  const [token, setToken] = createSignal("");
+const ConnectionManager: Component<{ onAddVault: () => void }> = (props) => {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
+  const [autostart, setAutostartState] = createSignal(false);
+
+  onMount(async () => {
+    if (!browserMode()) setAutostartState(await getAutostart());
+  });
+  const toggleAutostart = async () => {
+    const next = !autostart();
+    setAutostartState(next);
+    try {
+      await setAutostart(next);
+    } catch (e) {
+      setAutostartState(!next); // revertir si falla
+      setErr(`No se pudo cambiar el inicio automático: ${e}`);
+    }
+  };
 
   const openSaved = async (conn: { vault: string; serverUrl: string; token?: string }) => {
     setBusy(conn.vault);
@@ -129,44 +177,7 @@ const ConnectionManager: Component = () => {
     }
   };
 
-  const [pending, setPending] = createSignal<VaultInspection | null>(null);
-
-  const addNew = async () => {
-    setBusy("new");
-    setErr(null);
-    try {
-      const insp = await pickVaultAndInspect(serverUrl(), token().trim() || undefined);
-      if (!insp) {
-        setErr("No elegiste ninguna carpeta.");
-      } else if (insp.localOnly.length || insp.conflicts.length) {
-        setPending(insp); // hay notas locales o colisiones: que el usuario decida
-      } else {
-        await connect({ vault: insp.vault, serverUrl: insp.serverUrl, token: insp.token });
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const finishConnect = async (doImport: boolean) => {
-    const p = pending();
-    if (!p) return;
-    setBusy("new");
-    setPending(null);
-    try {
-      await connect({ vault: p.vault, serverUrl: p.serverUrl, token: p.token });
-      if (doImport) await importLocalDocs(p.localOnly);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
-    <>
     <div class="flex h-full items-center justify-center p-6">
       <div class="w-full max-w-md rounded-lg border bg-card p-6 shadow-sm">
         <div class="mb-1 flex items-center gap-2">
@@ -211,115 +222,58 @@ const ConnectionManager: Component = () => {
           </div>
         </Show>
 
-        <div class="space-y-2 border-t pt-4">
-          <label class="text-xs font-medium text-muted-foreground" for="server">
-            Agregar vault — servidor
-          </label>
-          <Input id="server" value={serverUrl()} onInput={(e) => setServerUrl(e.currentTarget.value)} placeholder="http://localhost:4321" />
-          <label class="text-xs font-medium text-muted-foreground" for="token">
-            Token <span class="font-normal">(si el server lo pide)</span>
-          </label>
-          <Input
-            id="token"
-            type="password"
-            value={token()}
-            onInput={(e) => setToken(e.currentTarget.value)}
-            placeholder="fg_…"
-          />
-          <Button class="w-full" onClick={addNew} disabled={!!busy()}>
-            <FolderOpen class="h-4 w-4" />
-            {browserMode() ? "Conectar (modo browser)" : "Elegir carpeta y conectar"}
+        <div class="border-t pt-4">
+          <Button class="w-full" onClick={props.onAddVault} disabled={!!busy()}>
+            <Plus class="h-4 w-4" />
+            Agregar vault
           </Button>
         </div>
 
         <Show when={err()}>
           <p class="mt-3 text-sm text-destructive">{err()}</p>
         </Show>
+
+        <Show when={!browserMode()}>
+          <label class="mt-4 flex cursor-pointer items-center gap-2 border-t pt-4 text-sm text-muted-foreground">
+            <input type="checkbox" class="h-4 w-4 accent-primary" checked={autostart()} onChange={toggleAutostart} />
+            Iniciar Forge automáticamente al iniciar sesión
+          </label>
+        </Show>
       </div>
     </div>
-
-    <Dialog open={!!pending()} onOpenChange={(o) => !o && setPending(null)}>
-      <DialogContent class="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Esta carpeta ya tiene notas</DialogTitle>
-          <DialogDescription>
-            Antes de conectar, decidí qué hacer con los archivos que ya están en la carpeta.
-          </DialogDescription>
-        </DialogHeader>
-
-        <Show when={pending()?.localOnly.length}>
-          <div class="rounded-md border p-3 text-sm">
-            <p class="mb-1 font-medium">
-              {pending()!.localOnly.length} nota{pending()!.localOnly.length === 1 ? "" : "s"} local
-              {pending()!.localOnly.length === 1 ? "" : "es"} que no está
-              {pending()!.localOnly.length === 1 ? "" : "n"} en el server.
-            </p>
-            <p class="text-xs text-muted-foreground">
-              Importalas (se suben al server) o dejalas como están (no aparecen en Forge hasta editarlas).
-            </p>
-          </div>
-        </Show>
-
-        <Show when={pending()?.conflicts.length}>
-          <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-            <p class="mb-1 font-medium text-amber-600">
-              {pending()!.conflicts.length} archivo{pending()!.conflicts.length === 1 ? "" : "s"} se
-              reemplazará{pending()!.conflicts.length === 1 ? "" : "n"} con la versión del server:
-            </p>
-            <ul class="mt-1 max-h-24 overflow-auto text-xs text-muted-foreground">
-              <For each={pending()!.conflicts}>{(c) => <li class="truncate">· {c.path}</li>}</For>
-            </ul>
-          </div>
-        </Show>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setPending(null)} disabled={!!busy()}>
-            Cancelar
-          </Button>
-          <Show
-            when={pending()?.localOnly.length}
-            fallback={
-              <Button onClick={() => finishConnect(false)} disabled={!!busy()}>
-                Conectar
-              </Button>
-            }
-          >
-            <Button variant="outline" onClick={() => finishConnect(false)} disabled={!!busy()}>
-              Conectar sin importar
-            </Button>
-            <Button onClick={() => finishConnect(true)} disabled={!!busy()}>
-              Importar y conectar
-            </Button>
-          </Show>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-    </>
   );
 };
 
-const SyncStatus: Component = () => (
-  <div class="flex items-center gap-2 text-xs text-muted-foreground">
-    <Show when={state.syncing}>
-      <RefreshCw class="h-3.5 w-3.5 animate-spin" />
-      <span>Sincronizando…</span>
-    </Show>
-    <Show when={!state.syncing}>
-      <Show
-        when={state.connected}
-        fallback={
-          <>
-            <WifiOff class="h-3.5 w-3.5 text-destructive" />
-            <span>Sin conexión</span>
-          </>
-        }
-      >
-        <Wifi class="h-3.5 w-3.5 text-emerald-500" />
-        <span>En vivo · seq {state.lastSeq}</span>
+const SyncStatus: Component = () => {
+  const s = () => active();
+  return (
+    <div class="flex items-center gap-2 text-xs text-muted-foreground">
+      <Show when={s()?.syncing}>
+        <RefreshCw class="h-3.5 w-3.5 animate-spin" />
+        <span>Sincronizando…</span>
       </Show>
-    </Show>
-  </div>
-);
+      <Show when={s() && !s()!.syncing}>
+        <Show
+          when={s()!.online}
+          fallback={
+            <>
+              <WifiOff class="h-3.5 w-3.5 text-destructive" />
+              <span>
+                Offline{s()!.pending > 0 ? ` · ${s()!.pending} sin sincronizar` : ""}
+              </span>
+            </>
+          }
+        >
+          <Wifi class="h-3.5 w-3.5 text-emerald-500" />
+          <span>
+            {s()!.connected ? "En vivo" : "Conectado"} · seq {s()!.lastSeq}
+            {s()!.pending > 0 ? ` · ${s()!.pending} en cola` : ""}
+          </span>
+        </Show>
+      </Show>
+    </div>
+  );
+};
 
 const NewDocDialog: Component<{
   open: boolean;
@@ -452,12 +406,18 @@ const App: Component = () => {
   const [query, setQuery] = createSignal("");
   const [hits, setHits] = createSignal<SearchHit[]>([]);
   const [view, setView] = createSignal<"editor" | "graph">("editor");
+  const [showAddVault, setShowAddVault] = createSignal(false);
+
+  // Sesión enfocada: la UI lee todo de acá. Permisos plenos por defecto cuando
+  // aún no hay sesión (no debería renderizarse el cuerpo en ese caso).
+  const s = () => active();
+  const perms = () => s()?.perms ?? { write: false, delete: false };
 
   const docs = createMemo(() => docList());
   const tree = createMemo(() => buildTree(docs().map((d) => ({ id: d.id, path: d.path }))));
   const current = createMemo<Doc | null>(() => {
     const id = selectedId();
-    return id ? state.docs[id] ?? null : null;
+    return id ? s()?.docs[id] ?? null : null;
   });
 
   // Cargar el doc en el editor. Reacciona a `current()`, que cambia tanto al
@@ -504,15 +464,16 @@ const App: Component = () => {
     if (!doc) return;
     setSaving(true);
     try {
-      const res = await saveDoc(
-        { id: doc.id, path: doc.path, content: draft(), base_version: baseVersion() },
-        state.author,
-      );
+      const res = await saveDoc({ id: doc.id, path: doc.path, content: draft(), base_version: baseVersion() });
       if ("conflict" in res) {
         setConflict({ local: draft(), server: res.server });
       } else if ("ok" in res) {
         setBaseVersion(res.doc.version);
         setDirty(false);
+      } else if ("queued" in res) {
+        // Offline: quedó en disco y en cola; se sincroniza al reconectar.
+        setDirty(false);
+        setNotice("Sin conexión: guardado local, se sincronizará al reconectar.");
       }
       // "denied": el aviso ya lo mostró el store; no tocamos el borrador.
     } finally {
@@ -524,13 +485,13 @@ const App: Component = () => {
     const doc = current();
     if (!doc) return;
     if (!(await askConfirm({ title: "Eliminar nota", description: `"${doc.path}" se borra para todo el equipo.`, confirmText: "Eliminar", destructive: true }))) return;
-    await deleteDoc(doc.id, state.author);
+    await deleteDoc(doc.id);
     setSelectedId(null);
   };
 
   const onCreate = async (path: string) => {
     setShowNew(false);
-    const res = await saveDoc({ path, content: `# ${path.split("/").pop()!.replace(/\.md$/, "")}\n\n` }, state.author);
+    const res = await saveDoc({ path, content: `# ${path.split("/").pop()!.replace(/\.md$/, "")}\n\n` });
     if ("ok" in res) setSelectedId(res.doc.id);
   };
 
@@ -543,14 +504,14 @@ const App: Component = () => {
       setShowNew(true);
     } else if (action === "delete") {
       if (!(await askConfirm({ title: "Eliminar nota", description: `"${node.path}" se borra para todo el equipo.`, confirmText: "Eliminar", destructive: true }))) return;
-      deleteDoc(node.docId!, state.author);
+      deleteDoc(node.docId!);
       if (selectedId() === node.docId) setSelectedId(null);
     } else if (action === "delete-folder") {
       const count = docs().filter((d) => d.path.startsWith(node.path + "/")).length;
       if (!(await askConfirm({ title: "Eliminar carpeta", description: `"${node.path}" y sus ${count} nota${count === 1 ? "" : "s"} se borran para todo el equipo.`, confirmText: "Eliminar", destructive: true }))) return;
       deleteFolder(node.path);
       const sel = selectedId();
-      if (sel && state.docs[sel]?.path.startsWith(node.path + "/")) setSelectedId(null);
+      if (sel && s()?.docs[sel]?.path.startsWith(node.path + "/")) setSelectedId(null);
     }
   };
 
@@ -567,12 +528,14 @@ const App: Component = () => {
     if (!c || !doc) return;
     setConflict(null);
     setBaseVersion(c.server.version); // re-basar sobre lo del server
-    const res = await saveDoc({ id: doc.id, path: doc.path, content: c.local, base_version: c.server.version }, state.author);
+    const res = await saveDoc({ id: doc.id, path: doc.path, content: c.local, base_version: c.server.version });
     if ("ok" in res) {
       setBaseVersion(res.doc.version);
       setDirty(false);
     } else if ("conflict" in res) {
       setConflict({ local: c.local, server: res.server });
+    } else if ("queued" in res) {
+      setDirty(false);
     }
   };
   const keepServer = () => {
@@ -592,12 +555,20 @@ const App: Component = () => {
     if (!q.trim()) return setHits([]);
     searchTimer = setTimeout(async () => {
       try {
-        setHits(await api.search(q));
+        setHits((await activeApi()?.search(q)) ?? []);
       } catch {
         setHits([]);
       }
     }, 300);
   };
+
+  // Conflictos de sync de TODAS las sesiones, etiquetados con su vault, para el
+  // diálogo de fondo (se resuelven uno a uno aunque sean de un vault no enfocado).
+  const allConflicts = createMemo(() =>
+    Object.values(state.sessions).flatMap((sess) =>
+      sess.conflicts.map((c) => ({ vault: sess.vault, path: c.path, local: c.local, server: c.server })),
+    ),
+  );
 
   const backlinksIndex = createMemo(() => buildBacklinks(docs()));
   const currentBacklinks = createMemo(() => (selectedId() ? backlinksIndex().get(selectedId()!) ?? [] : []));
@@ -634,7 +605,7 @@ const App: Component = () => {
   // Comandos para la paleta (Cmd+K): acciones + abrir notas. Se lee en vivo.
   const commands = (): Command[] => {
     const cmds: Command[] = [];
-    if (state.perms.write)
+    if (perms().write)
       cmds.push({ id: "new", label: "Nueva nota", group: "Acciones", run: () => (setNewPrefill(""), setShowNew(true)) });
     if (current())
       cmds.push({
@@ -651,9 +622,9 @@ const App: Component = () => {
     });
     cmds.push({ id: "sync", label: "Sincronizar ahora", group: "Acciones", run: () => pull() });
     cmds.push({ id: "theme", label: "Cambiar tema (claro/oscuro)", group: "Acciones", run: toggleTheme });
-    if (!state.authEnabled || state.role === "admin")
+    if (!s()?.authEnabled || s()?.role === "admin")
       cmds.push({ id: "tokens", label: "API keys", group: "Acciones", run: () => setShowTokens(true) });
-    cmds.push({ id: "disconnect", label: "Cambiar de vault", group: "Acciones", run: disconnect });
+    cmds.push({ id: "add-vault", label: "Agregar vault", group: "Acciones", run: () => setShowAddVault(true) });
 
     for (const d of docs())
       cmds.push({
@@ -681,7 +652,11 @@ const App: Component = () => {
 
   return (
     <Show when={!state.booting} fallback={<BootSplash />}>
-      <Show when={state.ready} fallback={<ConnectionManager />}>
+      <>
+      {/* AddVaultDialog vive afuera del Show de "ready" para estar disponible
+          tanto en el estado vacío como en el switcher. */}
+      <AddVaultDialog open={showAddVault()} onOpenChange={setShowAddVault} />
+      <Show when={s()?.ready} fallback={<ConnectionManager onAddVault={() => setShowAddVault(true)} />}>
       <div class="flex h-full flex-col">
         {/* Topbar */}
         <header class="flex h-12 shrink-0 items-center gap-3 border-b px-3">
@@ -724,12 +699,12 @@ const App: Component = () => {
             </button>
           </div>
           <div class="ml-auto flex items-center gap-3">
-            <Show when={state.authEnabled && state.role}>
+            <Show when={s()?.authEnabled && s()?.role}>
               <span
                 class="rounded-full border px-2 py-0.5 text-xs capitalize text-muted-foreground"
                 title="Tu rol en este vault"
               >
-                {state.role}
+                {s()?.role}
               </span>
             </Show>
             <SyncStatus />
@@ -741,7 +716,7 @@ const App: Component = () => {
             >
               {theme() === "dark" ? <Sun class="h-4 w-4" /> : <Moon class="h-4 w-4" />}
             </Button>
-            <Show when={!state.authEnabled || state.role === "admin"}>
+            <Show when={!s()?.authEnabled || s()?.role === "admin"}>
               <Button size="sm" variant="ghost" onClick={() => setShowTokens(true)} title="API keys">
                 <KeyRound class="h-4 w-4" />
               </Button>
@@ -749,7 +724,7 @@ const App: Component = () => {
             <Button size="sm" variant="ghost" onClick={() => pull()} title="Sincronizar ahora">
               <RefreshCw class="h-4 w-4" />
             </Button>
-            <Gated when={state.perms.write} reason={NO_WRITE}>
+            <Gated when={perms().write} reason={NO_WRITE}>
               <Button
                 size="sm"
                 onClick={() => {
@@ -798,7 +773,7 @@ const App: Component = () => {
                     <div class="flex flex-col items-center gap-3 px-2 py-8 text-center">
                       <p class="text-sm text-muted-foreground">Vault vacío.</p>
                       <Show
-                        when={state.perms.write}
+                        when={perms().write}
                         fallback={<p class="text-xs text-muted-foreground">Tu token es de solo lectura.</p>}
                       >
                         <Button
@@ -815,19 +790,47 @@ const App: Component = () => {
                     </div>
                   }
                 >
-                  <FileTree nodes={tree()} selectedId={selectedId()} perms={state.perms} onSelect={select} onAction={onTreeAction} />
+                  <FileTree nodes={tree()} selectedId={selectedId()} perms={perms()} onSelect={select} onAction={onTreeAction} />
                 </Show>
               </Show>
             </div>
-            <button
-              onClick={disconnect}
-              class="flex shrink-0 items-center gap-2 border-t px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              title="Cambiar de vault"
-            >
-              <FolderOpen class="h-3.5 w-3.5 shrink-0" />
-              <span class="min-w-0 flex-1 truncate">{state.vault ? vaultName(state.vault) : ""}</span>
-              <ChevronsUpDown class="h-3.5 w-3.5 shrink-0" />
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                class="flex w-full shrink-0 items-center gap-2 border-t px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title="Cambiar de vault"
+              >
+                <FolderOpen class="h-3.5 w-3.5 shrink-0" />
+                <span class="min-w-0 flex-1 truncate">{s() ? vaultName(s()!.vault) : ""}</span>
+                <ChevronsUpDown class="h-3.5 w-3.5 shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent class="w-64">
+                <For each={state.connections}>
+                  {(conn) => (
+                    <DropdownMenuItem
+                      class="gap-2"
+                      onSelect={() =>
+                        state.sessions[conn.vault]
+                          ? setActiveVault(conn.vault)
+                          : connect(conn).catch((e) => setNotice(`No se pudo abrir "${vaultName(conn.vault)}": ${e}`))
+                      }
+                    >
+                      <VaultSyncDot vault={conn.vault} />
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate">{vaultName(conn.vault)}</span>
+                        <span class="block truncate text-xs text-muted-foreground">{vaultSyncLabel(conn.vault)}</span>
+                      </span>
+                      <Show when={state.activeVault === conn.vault}>
+                        <Check class="h-3.5 w-3.5 shrink-0 text-primary" />
+                      </Show>
+                    </DropdownMenuItem>
+                  )}
+                </For>
+                <DropdownMenuItem class="gap-2 border-t text-muted-foreground" onSelect={() => setShowAddVault(true)}>
+                  <Plus class="h-3.5 w-3.5 shrink-0" />
+                  Agregar vault…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </aside>
 
           {/* Editor + Preview / Grafo */}
@@ -919,12 +922,12 @@ const App: Component = () => {
                       <Button size="sm" variant="ghost" onClick={() => setHistoryDocId(doc().id)} title="Historial">
                         <History class="h-4 w-4" />
                       </Button>
-                      <Gated when={state.perms.delete} reason={NO_DELETE}>
+                      <Gated when={perms().delete} reason={NO_DELETE}>
                         <Button size="sm" variant="ghost" onClick={onDelete} title="Eliminar">
                           <Trash2 class="h-4 w-4 text-destructive" />
                         </Button>
                       </Gated>
-                      <Gated when={state.perms.write} reason={NO_WRITE}>
+                      <Gated when={perms().write} reason={NO_WRITE}>
                         <Button size="sm" onClick={onSave} disabled={saving() || !dirty()}>
                           <Save class="h-4 w-4" />
                           Guardar
@@ -948,7 +951,7 @@ const App: Component = () => {
                     >
                       <MarkdownEditor
                         value={draft()}
-                        readOnly={!state.perms.write}
+                        readOnly={!perms().write}
                         linkTargets={() => docs().map((d) => ({ label: displayName(d.path), path: d.path }))}
                         onChange={(v) => {
                           setDraft(v);
@@ -973,7 +976,7 @@ const App: Component = () => {
       <CommandPalette open={showPalette()} onOpenChange={setShowPalette} commands={commands} />
       <HistoryDialog
         docId={historyDocId()}
-        path={historyDocId() ? state.docs[historyDocId()!]?.path : undefined}
+        path={historyDocId() ? s()?.docs[historyDocId()!]?.path : undefined}
         currentContent={draft()}
         onRestore={(content) => {
           setDraft(content);
@@ -991,7 +994,17 @@ const App: Component = () => {
         onKeepServer={keepServer}
         onClose={() => setConflict(null)}
       />
+      {/* Conflictos de sync de fondo (de cualquier vault, etiquetados con su
+          vault): se resuelven uno a uno aunque no haya editor abierto en ese doc. */}
+      <ConflictDialog
+        conflict={allConflicts()[0] ? { local: allConflicts()[0].local, server: allConflicts()[0].server } : null}
+        label={allConflicts()[0] ? `${vaultName(allConflicts()[0].vault)}/${allConflicts()[0].path}` : undefined}
+        onKeepMine={() => resolveConflictKeepMine(allConflicts()[0]!.vault, allConflicts()[0]!.path)}
+        onKeepServer={() => resolveConflictKeepServer(allConflicts()[0]!.vault, allConflicts()[0]!.path)}
+        onClose={() => {}}
+      />
 
+    </Show>
       <Show when={state.notice}>
         <div class="fixed bottom-4 right-4 z-50 flex max-w-sm items-start gap-2 rounded-lg border bg-card px-3 py-2.5 text-sm shadow-lg">
           <Info class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -1001,7 +1014,7 @@ const App: Component = () => {
           </button>
         </div>
       </Show>
-    </Show>
+      </>
     </Show>
   );
 };

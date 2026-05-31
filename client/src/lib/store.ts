@@ -8,6 +8,7 @@ import {
   vaultRead,
   vaultScan,
   startWatch,
+  stopWatch,
   onVaultChange,
   startEventStream,
   stopEventStream,
@@ -19,26 +20,63 @@ import {
   isTauri,
   type Connection,
 } from "./tauri";
+import * as idx from "./reconcile";
+
+/** Conflicto irreconciliable (3-way con hunks que se pisan) a resolver a mano. */
+export type SyncConflict = { path: string; local: string; server: Doc };
+
+const now = () => new Date().toISOString();
 
 const DEFAULT_AUTHOR = "yo"; // sin auth: no hay identidad de token
+const DEFAULT_SERVER = "http://localhost:4321";
 
-type State = {
-  vault: string | null;
+/** Nombre legible de un vault (basename) para avisos. */
+const baseName = (p: string) => p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || p;
+
+/** Estado reactivo de UNA sesión de sync (un vault). Lo lee la UI. */
+export type Session = {
+  vault: string;
   serverUrl: string;
   lastSeq: number;
   docs: Record<string, Doc>; // solo vivos (deleted=0)
-  connected: boolean;
+  connected: boolean; // stream SSE vivo
+  online: boolean; // el server REST es alcanzable (independiente del SSE)
+  pending: number; // cambios locales en cola sin sincronizar
+  conflicts: SyncConflict[]; // conflictos de sync pendientes de resolución manual
   syncing: boolean;
   ready: boolean; // vault elegido + primer pull hecho
-  booting: boolean; // intentando autoconectar al arrancar
-  connections: Connection[]; // conexiones guardadas (carpeta + servidor)
-  error: string | null;
-  notice: string | null; // aviso transitorio (p.ej. conflicto en sync de fondo)
   perms: { write: boolean; delete: boolean }; // permisos del token actual (gatea la UI)
   role: string | null; // rol del token (viewer/editor/admin), null si no hay auth
   authEnabled: boolean; // si el server pide token
   author: string; // identidad para el historial: nombre del token (o DEFAULT_AUTHOR sin auth)
+  error: string | null;
 };
+
+type State = {
+  sessions: Record<string, Session>; // por vault (= connId)
+  activeVault: string | null; // foco de la UI
+  connections: Connection[]; // conexiones guardadas (carpeta + servidor)
+  booting: boolean; // abriendo las conexiones al arrancar
+  notice: string | null; // aviso transitorio global
+};
+
+/**
+ * Runtime NO-reactivo de una sesión: la api con su base/token, el índice del
+ * vault y el estado del motor. Vive fuera del store (no metemos objetos no
+ * reactivos en createStore). El motor recibe `rt` por parámetro y escribe al
+ * store vía setState("sessions", rt.vault, …).
+ */
+type SessionRuntime = {
+  vault: string;
+  api: ForgeApi;
+  index: idx.IndexHandle;
+  flushing: boolean;
+  unsubscribe: (() => void) | null; // cleanup del SSE (browser); null en Tauri
+  unwatch: (() => void) | null; // cleanup del watcher (browser); null en Tauri
+  debounce: Map<string, ReturnType<typeof setTimeout>>;
+};
+
+const runtimes = new Map<string, SessionRuntime>();
 
 /** Permisos según el rol del token. Sin auth, permisos plenos (el server igual valida). */
 function permsForRole(role: string | null, authEnabled: boolean): { write: boolean; delete: boolean } {
@@ -54,22 +92,48 @@ function permsForRole(role: string | null, authEnabled: boolean): { write: boole
 }
 
 const [state, setState] = createStore<State>({
-  vault: null,
-  serverUrl: "http://localhost:4321",
-  lastSeq: 0,
-  docs: {},
-  connected: false,
-  syncing: false,
-  ready: false,
-  booting: true,
+  sessions: {},
+  activeVault: null,
   connections: [],
-  error: null,
+  booting: true,
   notice: null,
-  perms: { write: true, delete: true },
-  role: null,
-  authEnabled: false,
-  author: DEFAULT_AUTHOR,
 });
+
+export { state };
+
+/** Sesión enfocada (la que ve la UI). Reactivo. */
+export function active(): Session | null {
+  return state.activeVault ? state.sessions[state.activeVault] ?? null : null;
+}
+
+/** Api de la sesión enfocada (reemplaza el viejo singleton `api`). */
+export function activeApi(): ForgeApi | undefined {
+  return state.activeVault ? runtimes.get(state.activeVault)?.api : undefined;
+}
+
+function activeRuntime(): SessionRuntime | undefined {
+  return state.activeVault ? runtimes.get(state.activeVault) : undefined;
+}
+
+function freshSession(vault: string, serverUrl: string): Session {
+  return {
+    vault,
+    serverUrl,
+    lastSeq: 0,
+    docs: {},
+    connected: false,
+    online: true,
+    pending: 0,
+    conflicts: [],
+    syncing: false,
+    ready: false,
+    perms: { write: true, delete: true },
+    role: null,
+    authEnabled: false,
+    author: DEFAULT_AUTHOR,
+    error: null,
+  };
+}
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 export function setNotice(msg: string | null) {
@@ -78,26 +142,46 @@ export function setNotice(msg: string | null) {
   if (msg) noticeTimer = setTimeout(() => setState("notice", null), 6000);
 }
 
-export { state };
-
-export const api = new ForgeApi(state.serverUrl);
-
-let unsubscribe: (() => void) | null = null;
-
-/** Aplica un lote de docs del server: actualiza store y espeja a disco. */
-async function applyDocs(vault: string, docs: Doc[]) {
+/**
+ * Aplica un lote de docs del server (la verdad confirmada) a una sesión:
+ * actualiza store, espeja a disco y fija la BASE del 3-way merge en el índice.
+ * Fijar la base (con su synced_hash) antes de que llegue el evento del watcher
+ * suprime el eco de nuestra propia escritura.
+ */
+async function applyDocs(rt: SessionRuntime, docs: Doc[]) {
+  const sess = state.sessions[rt.vault];
+  if (!sess) return;
   for (const d of docs) {
     if (d.deleted) {
-      await vaultRemove(vault, d.path).catch(() => {});
-      setState("docs", d.id, undefined!);
+      await vaultRemove(rt.vault, d.path).catch(() => {});
+      setState("sessions", rt.vault, "docs", d.id, undefined!);
+      rt.index.deleteEntry(d.path);
     } else {
       // Si cambió el path, borrar el archivo viejo en disco.
-      const prev = state.docs[d.id];
-      if (prev && prev.path !== d.path) await vaultRemove(vault, prev.path).catch(() => {});
-      await vaultWrite(vault, d.path, d.content);
-      setState("docs", d.id, d);
+      const prev = sess.docs[d.id];
+      if (prev && prev.path !== d.path) {
+        await vaultRemove(rt.vault, prev.path).catch(() => {});
+        rt.index.deleteEntry(prev.path);
+      }
+      // Saca cualquier doc temporal/duplicado con el mismo path pero otro id
+      // (p.ej. el placeholder "local:" de un doc creado offline, ya confirmado).
+      for (const other of Object.values(sess.docs)) {
+        if (other.path === d.path && other.id !== d.id) setState("sessions", rt.vault, "docs", other.id, undefined!);
+      }
+      await vaultWrite(rt.vault, d.path, d.content);
+      setState("sessions", rt.vault, "docs", d.id, d);
+      rt.index.setEntry(d.path, {
+        id: d.id,
+        base_version: d.version,
+        base_content: d.content,
+        synced_hash: await idx.sha256(d.content),
+        dirty: false,
+        deleted: false,
+        updated_at: d.updated_at,
+      });
     }
   }
+  await persistIndex(rt);
 }
 
 /** Mensaje legible para un error de auth (token inválido / sin permiso). */
@@ -108,108 +192,590 @@ function authMessage(e: unknown, action: string): string | null {
   return null;
 }
 
-/** Pull incremental desde lastSeq. Con `throwOnError`, propaga (para el connect inicial). */
-export async function pull(opts?: { throwOnError?: boolean }) {
-  if (!state.vault || state.syncing) return;
-  setState({ syncing: true, error: null });
+/** Pull incremental desde lastSeq para una sesión. */
+async function pullSession(rt: SessionRuntime) {
+  const sess = state.sessions[rt.vault];
+  if (!sess || sess.syncing) return;
+  setState("sessions", rt.vault, { syncing: true, error: null });
   try {
-    const res = await api.sync(state.lastSeq);
-    if (res.documents.length) await applyDocs(state.vault, res.documents);
-    if (res.last_seq !== state.lastSeq) {
-      setState("lastSeq", res.last_seq);
-      await stateSave(state.vault, { last_seq: res.last_seq, server_url: state.serverUrl });
+    const res = await rt.api.sync(sess.lastSeq);
+    setState("sessions", rt.vault, "online", true);
+    if (res.documents.length) await applyDocs(rt, res.documents);
+    if (res.last_seq !== state.sessions[rt.vault].lastSeq) {
+      setState("sessions", rt.vault, "lastSeq", res.last_seq);
+      await stateSave(rt.vault, { last_seq: res.last_seq, server_url: sess.serverUrl });
     }
   } catch (e) {
+    if (!(e instanceof ApiError)) setState("sessions", rt.vault, "online", false); // red caída
     const msg = authMessage(e, "leer este vault") ?? `Sync falló: ${String(e)}`;
-    setState("error", msg);
-    // El connect inicial propaga (lo muestra el gestor de conexiones). Un sync
-    // de fondo, en cambio, fallaba en silencio: lo avisamos con un toast.
-    if (opts?.throwOnError) throw new Error(msg);
-    else setNotice(msg);
+    setState("sessions", rt.vault, "error", msg);
+    setNotice(msg);
   } finally {
-    setState("syncing", false);
+    setState("sessions", rt.vault, "syncing", false);
   }
 }
 
-/** Configura vault + server, hace primer pull y abre el canal SSE. */
-export async function connect(opts: { vault: string; serverUrl?: string; token?: string }) {
-  const serverUrl = (opts.serverUrl ?? state.serverUrl).replace(/\/$/, "");
-  api.setBase(serverUrl);
-  api.setToken(opts.token ?? null);
+/** Pull de la sesión enfocada (botón "Sincronizar ahora"). */
+export async function pull() {
+  const rt = activeRuntime();
+  if (rt) await pullSession(rt);
+}
 
-  // Verifica que el server responda antes de tocar el estado (falla rápido).
-  // /health es público; el chequeo real del token ocurre en el primer pull.
-  await api.health();
+// --- motor offline-first: cola de cambios (índice dirty) + flush + 3-way merge ---
 
-  // Sin índice local: el store en memoria arranca vacío, así que hacemos un
-  // pull completo (since=0) para rehidratarlo. El last_seq guardado solo sirve
-  // como referencia; no alcanza para reconstruir docs (id/version no viven en disco).
-  setState({
-    vault: opts.vault,
-    serverUrl,
-    lastSeq: 0,
-    docs: {},
-  });
+const blankEntry = (): idx.IndexEntry => ({
+  id: null,
+  base_version: 0,
+  base_content: "",
+  synced_hash: "",
+  dirty: false,
+  deleted: false,
+  updated_at: "",
+});
 
-  // throwOnError: si el token es inválido/sin permiso, el connect falla y se
-  // muestra el error en el gestor de conexiones (en vez de quedar "listo" vacío).
-  await pull({ throwOnError: true });
+/** Persiste el índice y refresca el contador reactivo de pendientes para la UI. */
+async function persistIndex(rt: SessionRuntime) {
+  await rt.index.persist();
+  setState("sessions", rt.vault, "pending", rt.index.dirtyPaths().length);
+}
 
-  // Permisos del token: gatean qué botones se habilitan. Si /whoami falla
-  // (server viejo, red), asumimos permisos plenos; el server igual valida.
-  try {
-    const who = await api.whoami();
-    setState({
-      perms: permsForRole(who.role, who.authEnabled),
-      role: who.role,
-      authEnabled: who.authEnabled,
-      author: who.name || DEFAULT_AUTHOR,
-    });
-  } catch {
-    setState({ perms: { write: true, delete: true }, role: null, authEnabled: false, author: DEFAULT_AUTHOR });
-  }
+/** Marca un doc como borrado local pendiente de pushear. */
+function markDeleted(rt: SessionRuntime, path: string) {
+  const entry = rt.index.getEntry(path);
+  if (!entry) return;
+  entry.deleted = true;
+  entry.dirty = true;
+  entry.updated_at = now();
+  rt.index.setEntry(path, entry);
+}
 
-  setState("ready", true);
+/** Marca un doc como editado local pendiente de pushear. */
+function markDirty(rt: SessionRuntime, path: string) {
+  const e = rt.index.getEntry(path) ?? blankEntry();
+  e.dirty = true;
+  e.deleted = false;
+  e.updated_at = now();
+  rt.index.setEntry(path, e);
+}
 
-  // Sync en vivo: en Tauri el stream SSE lo maneja Rust (el WKWebView no entrega
-  // respuestas long-lived al JS); en modo browser, fetch-streaming directo.
-  unsubscribe?.();
-  const onStatus = (connected: boolean) => {
-    setState("connected", connected);
-    // Al (re)conectar, pull de catch-up: recupera cambios perdidos en el gap
-    // entre el pull inicial y que el stream quede vivo (el primer evento tras
-    // conectar puede bufferearse). Idempotente.
-    if (connected) pull();
-  };
-  if (isTauri) {
-    // Listeners ANTES de arrancar el stream: Rust emite server-status apenas
-    // conecta y, si no estuviéramos escuchando, perderíamos ese primer evento.
-    const offChange = await onServerChange((seq) => {
-      if (seq > state.lastSeq) pull();
-    });
-    const offStatus = await onServerStatus(onStatus);
-    await startEventStream(serverUrl, opts.token ?? "");
-    unsubscribe = () => {
-      offChange();
-      offStatus();
-      stopEventStream();
-    };
+/** Encola un conflicto irreconciliable para resolución manual (dedup por path). */
+function enqueueConflict(rt: SessionRuntime, path: string, local: string, server: Doc) {
+  setState("sessions", rt.vault, "conflicts", (cs) => [...cs.filter((c) => c.path !== path), { path, local, server }]);
+  setNotice(`Conflicto en ${baseName(rt.vault)}/${path}`);
+}
+
+/**
+ * Punto único de entrada para un cambio local detectado (watcher o editor):
+ * marca el doc como dirty (o borrado) en el índice y dispara el flush.
+ */
+async function enqueuePush(rt: SessionRuntime, path: string) {
+  const content = await vaultRead(rt.vault, path);
+  const entry = rt.index.getEntry(path);
+
+  if (content == null) {
+    if (entry) markDeleted(rt, path);
+    else return; // archivo desconocido borrado: nada que sincronizar
   } else {
-    unsubscribe = api.subscribe((seq) => {
-      if (seq > state.lastSeq) pull();
-    }, onStatus);
+    const hash = await idx.sha256(content);
+    if (entry && !entry.deleted && entry.synced_hash === hash) return; // eco de nuestra escritura / sin cambios
+    markDirty(rt, path);
+  }
+  await persistIndex(rt);
+  await flushQueue(rt);
+}
+
+/** Reenvía al server las entradas dirty del índice, en orden. Idempotente y serializado por sesión. */
+async function flushQueue(rt: SessionRuntime) {
+  const sess = state.sessions[rt.vault];
+  if (rt.flushing || !sess || !sess.online) return;
+  rt.flushing = true;
+  try {
+    for (const path of rt.index.dirtyPaths()) {
+      const ok = await pushOne(rt, path);
+      if (!ok) break; // red caída: cortar; se reintenta al reconectar
+    }
+  } finally {
+    rt.flushing = false;
+  }
+}
+
+/** Pushea una entrada dirty. Devuelve false si hay que cortar el flush (red caída). */
+async function pushOne(rt: SessionRuntime, path: string): Promise<boolean> {
+  const author = state.sessions[rt.vault].author;
+  const entry = rt.index.getEntry(path);
+  if (!entry || (!entry.dirty && !entry.deleted)) return true;
+
+  try {
+    if (entry.deleted) {
+      if (entry.id) {
+        const doc = await rt.api.remove(entry.id, author);
+        setState("sessions", rt.vault, "docs", entry.id, undefined!);
+        bumpSeq(rt, doc.seq);
+      }
+      rt.index.deleteEntry(path);
+      await persistIndex(rt);
+      setState("sessions", rt.vault, "online", true);
+      return true;
+    }
+
+    const content = await vaultRead(rt.vault, path);
+    if (content == null) {
+      // desapareció mientras tanto: lo tratamos como borrado en la próxima vuelta
+      markDeleted(rt, path);
+      await persistIndex(rt);
+      return true;
+    }
+
+    let res;
+    if (entry.id) {
+      res = await rt.api.update(entry.id, { path, content, base_version: entry.base_version, author });
+    } else {
+      // ¿rename de un doc conocido? (mismo contenido y su archivo ya no está)
+      const moved = await findMovedDoc(rt, content, path);
+      res = moved
+        ? await rt.api.update(moved.id, { path, content, base_version: moved.version, author })
+        : await rt.api.create({ path, content, author });
+    }
+
+    setState("sessions", rt.vault, "online", true);
+    if ("conflict" in res) {
+      // El 409 de create por "path ya existe" NO trae el doc del server; lo buscamos.
+      let server: Doc | undefined = res.server;
+      if (!server) {
+        const sync = await rt.api.sync(0);
+        server = sync.documents.find((d) => d.path === path);
+      }
+      if (!server) return true; // no encontrado (carrera): se reintenta luego
+      if (server.deleted) {
+        // El path lo ocupa un doc borrado: lo revivimos con el contenido local
+        // (un update con deleted=0 lo reactiva). Reintentamos como update.
+        const e = rt.index.getEntry(path) ?? blankEntry();
+        e.id = server.id;
+        e.base_version = server.version;
+        e.dirty = true;
+        e.deleted = false;
+        e.updated_at = now();
+        rt.index.setEntry(path, e);
+        await persistIndex(rt);
+        return await pushOne(rt, path);
+      }
+      return await mergeConflict(rt, path, content, server);
+    }
+
+    await applyDocs(rt, [res.doc]); // fija base, limpia dirty
+    bumpSeq(rt, res.doc.seq);
+    return true;
+  } catch (e) {
+    const msg = authMessage(e, "sincronizar este vault");
+    if (msg) {
+      setNotice(msg);
+      return true; // permiso: salteamos este doc (queda dirty); seguimos con el resto
+    }
+    setState("sessions", rt.vault, "online", false); // red/timeout: cortar y reintentar al reconectar
+    return false;
+  }
+}
+
+/**
+ * Resuelve un 409 con 3-way merge contra la base del índice. Si el merge es
+ * limpio, pushea el resultado re-basado sobre el server; si se pisan los cambios
+ * (o no hay base), cae a resolución manual (ConflictDialog).
+ */
+async function mergeConflict(rt: SessionRuntime, path: string, local: string, server: Doc): Promise<boolean> {
+  const author = state.sessions[rt.vault].author;
+  const entry = rt.index.getEntry(path);
+  const base = entry?.base_content;
+
+  if (base == null) {
+    enqueueConflict(rt, path, local, server); // sin ancestro común no hay 3-way
+    if (entry) {
+      entry.dirty = false;
+      rt.index.setEntry(path, entry);
+      await persistIndex(rt);
+    }
+    return true;
   }
 
-  // Sync bidireccional: vigilar la carpeta y pushear ediciones externas.
-  // Se arranca DESPUÉS del primer pull para no procesar las escrituras del propio espejo.
-  await startWatch(opts.vault);
-  unwatch?.();
-  unwatch = await onVaultChange((paths) => paths.forEach(scheduleExternal));
+  const merged = idx.threeWayMerge(local, base, server.content);
+  if (merged.conflict) {
+    enqueueConflict(rt, path, local, server);
+    if (entry) {
+      entry.dirty = false;
+      rt.index.setEntry(path, entry);
+      await persistIndex(rt);
+    }
+    return true;
+  }
 
+  try {
+    const res = await rt.api.update(server.id, {
+      path,
+      content: merged.result,
+      base_version: server.version,
+      author,
+    });
+    setState("sessions", rt.vault, "online", true);
+    if ("conflict" in res) {
+      // el server volvió a cambiar entre medio: dejamos que lo resuelva la persona
+      enqueueConflict(rt, path, merged.result, res.server);
+      return true;
+    }
+    await applyDocs(rt, [res.doc]);
+    bumpSeq(rt, res.doc.seq);
+    return true;
+  } catch (e) {
+    const msg = authMessage(e, "sincronizar este vault");
+    if (msg) {
+      setNotice(msg);
+      return true;
+    }
+    setState("sessions", rt.vault, "online", false);
+    return false;
+  }
+}
+
+/** Reconstruye los docs de una sesión desde los .md en disco (modo offline). */
+async function hydrateFromDisk(rt: SessionRuntime) {
+  const disk = await vaultScan(rt.vault);
+  const docs: Record<string, Doc> = {};
+  for (const f of disk) {
+    const entry = rt.index.getEntry(f.path);
+    const id = entry?.id ?? `local:${f.path}`;
+    docs[id] = {
+      id,
+      path: f.path,
+      title: null,
+      content: f.content,
+      version: entry?.base_version ?? 0,
+      seq: 0,
+      deleted: 0,
+      updated_by: null,
+      updated_at: entry?.updated_at ?? "",
+    };
+  }
+  setState("sessions", rt.vault, "docs", docs);
+}
+
+/**
+ * Reconciliación completa de una sesión: disco vs base (índice) vs remoto
+ * (sync 0). Si el server no responde, cae a modo offline hidratando desde disco.
+ * Propaga errores de auth (los muestra quien abrió la sesión).
+ */
+async function reconcile(rt: SessionRuntime) {
+  const sess = state.sessions[rt.vault];
+  if (!sess || sess.syncing) return;
+  setState("sessions", rt.vault, { syncing: true, error: null });
+
+  let disk: { path: string; content: string }[];
+  let sync: { documents: Doc[]; last_seq: number };
+  try {
+    [disk, sync] = await Promise.all([vaultScan(rt.vault), rt.api.sync(0)]);
+    setState("sessions", rt.vault, "online", true);
+  } catch (e) {
+    setState("sessions", rt.vault, "syncing", false);
+    const msg = authMessage(e, "leer este vault");
+    if (msg) throw new Error(msg); // token inválido/sin permiso
+    setState("sessions", rt.vault, "online", false); // red caída: modo offline
+    await hydrateFromDisk(rt);
+    return;
+  }
+
+  try {
+    setState("sessions", rt.vault, "lastSeq", sync.last_seq);
+    await stateSave(rt.vault, { last_seq: sync.last_seq, server_url: sess.serverUrl });
+
+    // Poblar el store con el estado vivo del server: es lo que ve la UI.
+    const liveDocs: Record<string, Doc> = {};
+    for (const d of sync.documents) if (!d.deleted) liveDocs[d.id] = d;
+    setState("sessions", rt.vault, "docs", liveDocs);
+
+    const remoteByPath = new Map(sync.documents.map((d) => [d.path, d]));
+    const diskByPath = new Map(disk.map((f) => [f.path, f.content]));
+    const paths = new Set<string>([
+      ...diskByPath.keys(),
+      ...Object.keys(rt.index.getIndex().docs),
+      ...remoteByPath.keys(),
+    ]);
+
+    for (const path of paths) {
+      const content = diskByPath.get(path) ?? null;
+      const onDisk = content != null;
+      const diskHash = content != null ? await idx.sha256(content) : null;
+      const base = rt.index.getEntry(path);
+      const remote = remoteByPath.get(path);
+      const remoteHash = remote && !remote.deleted ? await idx.sha256(remote.content) : null;
+
+      switch (idx.classify({ onDisk, diskHash, remoteHash, base, remote })) {
+        case "noop":
+          break;
+        case "pull":
+        case "pull-delete":
+          if (remote) await applyDocs(rt, [remote]);
+          break;
+        case "create":
+        case "push":
+          markDirty(rt, path);
+          break;
+        case "push-delete":
+          markDeleted(rt, path);
+          break;
+        case "merge":
+          if (remote && !remote.deleted) await mergeConflict(rt, path, content ?? "", remote);
+          break;
+        case "delete-vs-edit":
+          if (remote) {
+            await applyDocs(rt, [remote]);
+            setNotice(`"${path}" se restauró: se editó en el server mientras lo borraste localmente.`);
+          }
+          break;
+        case "edit-vs-delete":
+          // local editó, remoto borró -> revivir el doc con la edición local
+          if (remote) {
+            const e = rt.index.getEntry(path) ?? blankEntry();
+            e.id = remote.id;
+            e.base_version = remote.version; // versión actual (borrada): el update reactiva
+            e.dirty = true;
+            e.deleted = false;
+            e.updated_at = now();
+            rt.index.setEntry(path, e);
+            setNotice(`"${path}" se reactiva: lo editaste localmente y estaba borrado en el server.`);
+          }
+          break;
+      }
+    }
+    await persistIndex(rt);
+    await flushQueue(rt);
+  } finally {
+    setState("sessions", rt.vault, "syncing", false);
+  }
+}
+
+// --- resolución manual de conflictos de sync (desde el ConflictDialog) ---
+
+/** Sobrescribe con la versión local (re-basada sobre el server). */
+export async function resolveConflictKeepMine(vault: string, path: string) {
+  const rt = runtimes.get(vault);
+  const sess = state.sessions[vault];
+  if (!rt || !sess) return;
+  const c = sess.conflicts.find((x) => x.path === path);
+  if (!c) return;
+  setState("sessions", vault, "conflicts", (cs) => cs.filter((x) => x.path !== path));
+  try {
+    const res = await rt.api.update(c.server.id, {
+      path,
+      content: c.local,
+      base_version: c.server.version,
+      author: sess.author,
+    });
+    if ("conflict" in res) enqueueConflict(rt, path, c.local, res.server);
+    else {
+      await applyDocs(rt, [res.doc]);
+      bumpSeq(rt, res.doc.seq);
+    }
+  } catch (e) {
+    setNotice(authMessage(e, "guardar este vault") ?? `No se pudo guardar ${path}: ${e}`);
+  }
+}
+
+/** Descarta lo local y se queda con la versión del server. */
+export async function resolveConflictKeepServer(vault: string, path: string) {
+  const rt = runtimes.get(vault);
+  const sess = state.sessions[vault];
+  if (!rt || !sess) return;
+  const c = sess.conflicts.find((x) => x.path === path);
+  if (!c) return;
+  setState("sessions", vault, "conflicts", (cs) => cs.filter((x) => x.path !== path));
+  await applyDocs(rt, [c.server]);
+  bumpSeq(rt, c.server.seq);
+}
+
+// --- ciclo de vida de las sesiones ---
+
+/**
+ * Abre una sesión de sync para un vault: crea su ForgeApi + IndexHandle, hace
+ * health → reconcile → whoami, y arranca stream SSE + watcher. Server caído →
+ * la sesión queda offline e hidrata desde disco; un error de auth propaga (y
+ * limpia la sesión a medio abrir). Idempotente: si ya está abierta, no hace nada.
+ */
+export async function openSession(opts: { vault: string; serverUrl?: string; token?: string }) {
+  if (runtimes.has(opts.vault)) return;
+  const serverUrl = (opts.serverUrl ?? DEFAULT_SERVER).replace(/\/$/, "");
+  const api = new ForgeApi(serverUrl);
+  api.setToken(opts.token ?? null);
+  const index = idx.createIndexHandle(opts.vault);
+  await index.load();
+  const rt: SessionRuntime = {
+    vault: opts.vault,
+    api,
+    index,
+    flushing: false,
+    unsubscribe: null,
+    unwatch: null,
+    debounce: new Map(),
+  };
+  runtimes.set(opts.vault, rt);
+  setState("sessions", opts.vault, freshSession(opts.vault, serverUrl));
+
+  // ¿Server alcanzable? /health es público; si falla, arrancamos offline.
+  let online = true;
+  try {
+    await api.health();
+  } catch {
+    online = false;
+  }
+
+  if (online) {
+    try {
+      await reconcile(rt); // sync(0) + reconciliación; propaga error de auth
+    } catch (e) {
+      runtimes.delete(opts.vault);
+      setState("sessions", opts.vault, undefined!);
+      throw e;
+    }
+    // Permisos del token. Si /whoami falla (server viejo/red), asumimos plenos.
+    try {
+      const who = await api.whoami();
+      setState("sessions", opts.vault, {
+        perms: permsForRole(who.role, who.authEnabled),
+        role: who.role,
+        authEnabled: who.authEnabled,
+        author: who.name || DEFAULT_AUTHOR,
+      });
+    } catch {
+      setState("sessions", opts.vault, {
+        perms: { write: true, delete: true },
+        role: null,
+        authEnabled: false,
+        author: DEFAULT_AUTHOR,
+      });
+    }
+  } else {
+    setState("sessions", opts.vault, { online: false });
+    await hydrateFromDisk(rt);
+  }
+
+  setState("sessions", opts.vault, "ready", true);
+  await startSessionSync(rt, serverUrl, opts.token);
+}
+
+/**
+ * Arranca la sincronización en vivo de una sesión: stream SSE + watcher del
+ * vault. En Tauri el stream y el watcher viven en Rust y sus eventos los
+ * despacha el listener global (ver registerGlobalListeners); en browser, el
+ * SSE va por fetch-streaming directo de la api.
+ */
+async function startSessionSync(rt: SessionRuntime, serverUrl: string, token?: string) {
+  if (isTauri) {
+    await startEventStream(rt.vault, serverUrl, token ?? "");
+  } else {
+    rt.unsubscribe?.();
+    rt.unsubscribe = rt.api.subscribe(
+      (seq) => {
+        if (seq > state.sessions[rt.vault].lastSeq) pullSession(rt);
+      },
+      (connected) => {
+        setState("sessions", rt.vault, "connected", connected);
+        if (connected) reconcile(rt);
+      },
+    );
+  }
+  // Watcher: en Tauri emite vault-change (lo despacha el listener global).
+  await startWatch(rt.vault, rt.vault);
+}
+
+/** Cierra una sesión: corta SSE + watcher, limpia runtime y store. Reasigna el foco si era la activa. */
+export async function closeSession(vault: string) {
+  const rt = runtimes.get(vault);
+  if (!rt) return;
+  rt.unsubscribe?.();
+  rt.unwatch?.();
+  for (const t of rt.debounce.values()) clearTimeout(t);
+  rt.debounce.clear();
+  await stopEventStream(vault); // no-op en browser
+  await stopWatch(vault); // no-op en browser
+  rt.index.clear();
+  runtimes.delete(vault);
+  setState("sessions", vault, undefined!);
+  if (state.activeVault === vault) {
+    const next = Object.keys(state.sessions)[0] ?? null;
+    setState("activeVault", next);
+    if (next) configSetLastVault(next).catch(() => {});
+  }
+}
+
+/** Cambia el foco de la UI a otro vault. Instantáneo: no toca el sync de nadie. */
+export async function setActiveVault(vault: string) {
+  if (!state.sessions[vault]) return;
+  setState("activeVault", vault);
+  await configSetLastVault(vault);
+}
+
+/**
+ * Abre (si hace falta) una conexión, la enfoca y la persiste. Es el flujo de
+ * "abrir/agregar vault" desde la UI. Propaga errores de auth (los muestra el
+ * gestor de conexiones / el diálogo de agregar).
+ */
+export async function connect(opts: { vault: string; serverUrl?: string; token?: string }) {
+  await openSession(opts);
+  setState("activeVault", opts.vault);
+  const serverUrl = (opts.serverUrl ?? DEFAULT_SERVER).replace(/\/$/, "");
   await persistConnection(opts.vault, serverUrl, opts.token);
 }
 
-/** Guarda/actualiza la conexión y la marca como la última usada. No rompe la conexión si falla. */
+// --- listeners globales (Tauri) y de red ---
+
+let globalListenersReady = false;
+let offVaultChange: (() => void) | null = null;
+let offServerChange: (() => void) | null = null;
+let offServerStatus: (() => void) | null = null;
+
+/** Registra UN listener por tipo de evento Tauri que despacha por connId a su runtime. */
+async function registerGlobalListeners() {
+  if (globalListenersReady || !isTauri) return;
+  globalListenersReady = true;
+  offVaultChange = await onVaultChange((connId, paths) => {
+    const rt = runtimes.get(connId);
+    if (rt) paths.forEach((p) => scheduleExternal(rt, p));
+  });
+  offServerChange = await onServerChange((connId, seq) => {
+    const rt = runtimes.get(connId);
+    const sess = state.sessions[connId];
+    if (rt && sess && seq > sess.lastSeq) pullSession(rt);
+  });
+  offServerStatus = await onServerStatus((connId, connected) => {
+    const rt = runtimes.get(connId);
+    if (!rt) return;
+    setState("sessions", connId, "connected", connected);
+    // Al (re)conectar, reconciliar: trae el gap remoto y reenvía la cola local.
+    if (connected) reconcile(rt);
+  });
+}
+
+let netListeners: (() => void) | null = null;
+
+function setupNetworkListeners() {
+  if (netListeners || typeof window === "undefined") return;
+  const onOnline = () => {
+    for (const rt of runtimes.values()) {
+      setState("sessions", rt.vault, "online", true);
+      reconcile(rt);
+    }
+  };
+  const onOffline = () => {
+    for (const rt of runtimes.values()) setState("sessions", rt.vault, "online", false);
+  };
+  window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
+  netListeners = () => {
+    window.removeEventListener("online", onOnline);
+    window.removeEventListener("offline", onOffline);
+    netListeners = null;
+  };
+}
+
+// --- config: conexiones guardadas ---
+
+/** Guarda/actualiza la conexión y la marca como la última usada. No rompe nada si falla. */
 async function persistConnection(vault: string, serverUrl: string, token?: string) {
   try {
     const cfg = await configLoad();
@@ -222,45 +788,45 @@ async function persistConnection(vault: string, serverUrl: string, token?: strin
   }
 }
 
-/** Carga la config, expone las conexiones y autoconecta a la última usada. */
-export async function connectLast(): Promise<boolean> {
+/** Actualiza solo `lastVault` en la config (al cambiar el foco). */
+async function configSetLastVault(vault: string) {
   const cfg = await configLoad();
-  setState("connections", cfg.connections);
-  if (!cfg.lastVault) return false;
-  const conn = cfg.connections.find((c) => c.vault === cfg.lastVault);
-  if (!conn) return false;
-  try {
-    await connect({ vault: conn.vault, serverUrl: conn.serverUrl, token: conn.token });
-    return true;
-  } catch (e) {
-    setNotice(`No se pudo abrir "${conn.vault}": ${e}`);
-    return false;
-  }
+  await configSave({ connections: cfg.connections, lastVault: vault });
 }
 
-/** Intento de autoconexión al arrancar. Si falla, muestra el gestor de conexiones. */
+/**
+ * Arranque: carga la config y abre TODAS las conexiones guardadas en paralelo
+ * (un server caído no tumba el resto). El foco arranca en lastVault (o la
+ * primera que haya abierto).
+ */
 export async function boot() {
   setState("booting", true);
   try {
-    await connectLast();
+    const cfg = await configLoad();
+    setState("connections", cfg.connections);
+    await registerGlobalListeners();
+    setupNetworkListeners();
+    if (cfg.connections.length) {
+      await Promise.allSettled(
+        cfg.connections.map((c) =>
+          openSession({ vault: c.vault, serverUrl: c.serverUrl, token: c.token }).catch((e) => {
+            setNotice(`No se pudo abrir "${baseName(c.vault)}": ${e instanceof Error ? e.message : e}`);
+            throw e;
+          }),
+        ),
+      );
+    }
+    const focus =
+      cfg.lastVault && runtimes.has(cfg.lastVault) ? cfg.lastVault : Object.keys(state.sessions)[0] ?? null;
+    setState("activeVault", focus);
   } finally {
     setState("booting", false);
   }
 }
 
-/** Cierra la conexión actual (corta SSE + watcher) y vuelve al gestor. */
-export function disconnect() {
-  unsubscribe?.();
-  unsubscribe = null;
-  unwatch?.();
-  unwatch = null;
-  for (const t of debounce.values()) clearTimeout(t);
-  debounce.clear();
-  setState({ ready: false, vault: null, docs: {}, connected: false, perms: { write: true, delete: true }, role: null, authEnabled: false, author: DEFAULT_AUTHOR });
-}
-
-/** Elimina una conexión guardada. */
+/** Elimina una conexión guardada (cerrando antes su sesión si está abierta). */
 export async function removeConnection(vault: string) {
+  await closeSession(vault);
   const cfg = await configLoad();
   const connections = cfg.connections.filter((c) => c.vault !== vault);
   const lastVault = cfg.lastVault === vault ? connections[0]?.vault ?? null : cfg.lastVault;
@@ -268,82 +834,31 @@ export async function removeConnection(vault: string) {
   setState("connections", connections);
 }
 
-let unwatch: (() => void) | null = null;
-const debounce = new Map<string, ReturnType<typeof setTimeout>>();
-
-function scheduleExternal(path: string) {
-  clearTimeout(debounce.get(path));
-  debounce.set(
+/** Reacciona a un cambio externo de archivo (watcher): debounce + encolar + flush. */
+function scheduleExternal(rt: SessionRuntime, path: string) {
+  clearTimeout(rt.debounce.get(path));
+  rt.debounce.set(
     path,
     setTimeout(() => {
-      debounce.delete(path);
-      handleExternalChange(path).catch((e) => setNotice(`Error al sincronizar ${path}: ${e}`));
+      rt.debounce.delete(path);
+      enqueuePush(rt, path).catch((e) => setNotice(`Error al sincronizar ${path}: ${e}`));
     }, 400),
   );
 }
 
-function bumpSeq(seq: number) {
-  if (state.vault && seq > state.lastSeq) {
-    setState("lastSeq", seq);
-    stateSave(state.vault, { last_seq: seq, server_url: state.serverUrl });
+function bumpSeq(rt: SessionRuntime, seq: number) {
+  const sess = state.sessions[rt.vault];
+  if (sess && seq > sess.lastSeq) {
+    setState("sessions", rt.vault, "lastSeq", seq);
+    stateSave(rt.vault, { last_seq: seq, server_url: sess.serverUrl });
   }
 }
 
-/** Procesa un cambio detectado en disco: compara con el store y pushea si difiere. */
-async function handleExternalChange(path: string) {
-  const vault = state.vault;
-  if (!vault) return;
-
-  const content = await vaultRead(vault, path);
-  if (content == null) return; // archivo borrado -> ignoramos (decisión de diseño)
-
-  const doc = Object.values(state.docs).find((d) => d.path === path);
-
-  if (doc) {
-    if (doc.content === content) return; // eco de nuestra propia escritura o sin cambios
-    const res = await api.update(doc.id, { path, content, base_version: doc.version, author: state.author });
-    if ("conflict" in res) {
-      await applyDocs(vault, [res.server]); // gana el server: reescribe el disco
-      bumpSeq(res.server.seq);
-      setNotice(`Conflicto en ${path}: se mantuvo la versión del server.`);
-    } else {
-      await applyDocs(vault, [res.doc]);
-      bumpSeq(res.doc.seq);
-    }
-  } else {
-    // El archivo no está en el store. ¿Es un rename/move? (mismo contenido que un
-    // doc cuyo archivo ya no está en disco). Si sí, movemos ese doc en vez de duplicar.
-    const moved = await findMovedDoc(vault, content, path);
-    if (moved) {
-      const res = await api.update(moved.id, { path, content, base_version: moved.version, author: state.author });
-      if ("conflict" in res) {
-        await applyDocs(vault, [res.server]);
-        bumpSeq(res.server.seq);
-        setNotice(`Conflicto al mover ${path}: se mantuvo la versión del server.`);
-      } else {
-        await applyDocs(vault, [res.doc]);
-        bumpSeq(res.doc.seq);
-      }
-      return;
-    }
-
-    // Archivo nuevo de verdad -> crear en el server.
-    const res = await api.create({ path, content, author: state.author });
-    if ("conflict" in res) {
-      await applyDocs(vault, [res.server]);
-      bumpSeq(res.server.seq);
-    } else {
-      await applyDocs(vault, [res.doc]);
-      bumpSeq(res.doc.seq);
-    }
-  }
-}
-
-/** Busca un doc que haya sido renombrado/movido a `newPath`: mismo contenido y su archivo ya no está. */
-async function findMovedDoc(vault: string, content: string, newPath: string): Promise<Doc | null> {
-  for (const d of Object.values(state.docs)) {
+/** Busca un doc renombrado/movido a `newPath`: mismo contenido y su archivo ya no está. */
+async function findMovedDoc(rt: SessionRuntime, content: string, newPath: string): Promise<Doc | null> {
+  for (const d of Object.values(state.sessions[rt.vault].docs)) {
     if (d.path === newPath || d.content !== content) continue;
-    const stillOnDisk = await vaultRead(vault, d.path);
+    const stillOnDisk = await vaultRead(rt.vault, d.path);
     if (stillOnDisk == null) return d; // su archivo desapareció -> fue movido acá
   }
   return null;
@@ -358,18 +873,18 @@ export type VaultInspection = {
 };
 
 /**
- * Elige una carpeta y la compara con el server SIN escribir nada: detecta notas
- * locales preexistentes (para ofrecer importarlas) y colisiones (que el pull
- * sobrescribiría). Devuelve null si no se eligió carpeta.
+ * Elige una carpeta y la compara con el server SIN escribir nada (con una api
+ * efímera, sin tocar las sesiones abiertas): detecta notas locales preexistentes
+ * y colisiones. Devuelve null si no se eligió carpeta.
  */
 export async function pickVaultAndInspect(serverUrlRaw?: string, token?: string): Promise<VaultInspection | null> {
   const vault = await pickVault();
   if (!vault) return null;
-  const serverUrl = (serverUrlRaw ?? state.serverUrl).replace(/\/$/, "");
-  api.setBase(serverUrl);
-  api.setToken(token ?? null);
-  await api.health();
-  const [local, sync] = await Promise.all([vaultScan(vault), api.sync(0)]);
+  const serverUrl = (serverUrlRaw ?? DEFAULT_SERVER).replace(/\/$/, "");
+  const probe = new ForgeApi(serverUrl);
+  probe.setToken(token ?? null);
+  await probe.health();
+  const [local, sync] = await Promise.all([vaultScan(vault), probe.sync(0)]);
   const serverByPath = new Map(sync.documents.filter((d) => !d.deleted).map((d) => [d.path, d.content]));
   const localOnly: { path: string; content: string }[] = [];
   const conflicts: { path: string }[] = [];
@@ -380,109 +895,165 @@ export async function pickVaultAndInspect(serverUrlRaw?: string, token?: string)
   return { vault, serverUrl, token, localOnly, conflicts };
 }
 
-/** Sube al server las notas locales elegidas. Permiso/red/409 → saltea sin abortar el resto. */
+/** Sube al server (sesión activa) las notas locales elegidas. */
 export async function importLocalDocs(docs: { path: string; content: string }[]) {
   for (const d of docs) {
     try {
-      await saveDoc({ path: d.path, content: d.content }, state.author);
+      await saveDoc({ path: d.path, content: d.content });
     } catch {
       /* saltear */
     }
   }
 }
 
-// --- mutaciones (push al server; el SSE/pull refleja el resultado) ---
+// --- mutaciones de la sesión enfocada (push al server; el SSE/pull refleja el resultado) ---
 
-export type SaveOutcome = { ok: true; doc: Doc } | { conflict: true; server: Doc } | { denied: true };
+export type SaveOutcome =
+  | { ok: true; doc: Doc }
+  | { conflict: true; server: Doc }
+  | { denied: true }
+  | { queued: true }; // sin conexión: guardado en disco y encolado para sincronizar
 
 export async function saveDoc(
   doc: { id?: string; path: string; title?: string; content: string; base_version?: number },
   author?: string,
 ): Promise<SaveOutcome> {
+  const rt = activeRuntime();
+  if (!rt) return { denied: true };
+  const sess = state.sessions[rt.vault];
+  const who = author ?? sess.author;
   let res;
   try {
     res = doc.id
-      ? await api.update(doc.id, {
+      ? await rt.api.update(doc.id, {
           path: doc.path,
           title: doc.title,
           content: doc.content,
-          base_version: doc.base_version ?? state.docs[doc.id]?.version ?? 1,
-          author,
+          base_version: doc.base_version ?? sess.docs[doc.id]?.version ?? 1,
+          author: who,
         })
-      : await api.create({ path: doc.path, title: doc.title, content: doc.content, author });
+      : await rt.api.create({ path: doc.path, title: doc.title, content: doc.content, author: who });
   } catch (e) {
     const msg = authMessage(e, "editar este vault");
     if (msg) {
       setNotice(msg);
       return { denied: true };
     }
-    throw e;
+    if (e instanceof ApiError) throw e; // error del server (5xx): propagar
+
+    // Red caída: persistir en disco + encolar; se sincroniza al reconectar.
+    setState("sessions", rt.vault, "online", false);
+    await vaultWrite(rt.vault, doc.path, doc.content);
+    const id = doc.id ?? `local:${doc.path}`;
+    setState("sessions", rt.vault, "docs", id, {
+      id,
+      path: doc.path,
+      title: doc.title ?? null,
+      content: doc.content,
+      version: doc.base_version ?? sess.docs[doc.id ?? ""]?.version ?? 0,
+      seq: 0,
+      deleted: 0,
+      updated_by: who,
+      updated_at: now(),
+    });
+    await enqueuePush(rt, doc.path);
+    return { queued: true };
   }
 
   if ("conflict" in res) return { conflict: true, server: res.server };
 
   // Reflejar de inmediato (no esperar al SSE) para UX fluida.
-  if (state.vault) await applyDocs(state.vault, [res.doc]);
-  if (res.doc.seq > state.lastSeq) {
-    setState("lastSeq", res.doc.seq);
-    if (state.vault) await stateSave(state.vault, { last_seq: res.doc.seq, server_url: state.serverUrl });
+  await applyDocs(rt, [res.doc]);
+  if (res.doc.seq > state.sessions[rt.vault].lastSeq) {
+    setState("sessions", rt.vault, "lastSeq", res.doc.seq);
+    await stateSave(rt.vault, { last_seq: res.doc.seq, server_url: sess.serverUrl });
   }
   return { ok: true, doc: res.doc };
 }
 
 export async function deleteDoc(id: string, author?: string) {
+  const rt = activeRuntime();
+  if (!rt) return;
+  const sess = state.sessions[rt.vault];
+  const who = author ?? sess.author;
   let doc: Doc;
   try {
-    doc = await api.remove(id, author);
+    doc = await rt.api.remove(id, who);
   } catch (e) {
     const msg = authMessage(e, "borrar en este vault");
     if (msg) return setNotice(msg);
-    throw e;
+    if (e instanceof ApiError) throw e; // error del server (5xx): propagar
+
+    // Red caída: borrar local + encolar el DELETE; se sincroniza al reconectar.
+    setState("sessions", rt.vault, "online", false);
+    const target = sess.docs[id];
+    if (target) {
+      await vaultRemove(rt.vault, target.path).catch(() => {});
+      setState("sessions", rt.vault, "docs", id, undefined!);
+      markDeleted(rt, target.path);
+      await persistIndex(rt);
+    }
+    return;
   }
-  if (state.vault) await applyDocs(state.vault, [doc]);
-  if (doc.seq > state.lastSeq) {
-    setState("lastSeq", doc.seq);
-    if (state.vault) await stateSave(state.vault, { last_seq: doc.seq, server_url: state.serverUrl });
+  await applyDocs(rt, [doc]);
+  if (doc.seq > state.sessions[rt.vault].lastSeq) {
+    setState("sessions", rt.vault, "lastSeq", doc.seq);
+    await stateSave(rt.vault, { last_seq: doc.seq, server_url: sess.serverUrl });
   }
 }
 
 /** Renombra/mueve un doc cambiándole el path (mantiene el contenido). */
 export async function moveDoc(id: string, newPath: string): Promise<SaveOutcome | null> {
-  const doc = state.docs[id];
+  const sess = active();
+  if (!sess) return null;
+  const doc = sess.docs[id];
   if (!doc) return null;
   if (doc.path === newPath) return { ok: true, doc };
-  const res = await saveDoc({ id, path: newPath, content: doc.content, base_version: doc.version }, state.author);
+  const res = await saveDoc({ id, path: newPath, content: doc.content, base_version: doc.version }, sess.author);
   if ("conflict" in res) setNotice(`No se pudo mover "${doc.path}": ${res.server.path} cambió en el server.`);
   return res;
 }
 
 /** Renombra una carpeta: reescribe el prefijo de path de todos los docs bajo ella. */
 export async function renameFolder(oldPrefix: string, newPrefix: string) {
+  const sess = active();
+  if (!sess) return;
   const op = oldPrefix.replace(/\/+$/, "");
   const np = newPrefix.replace(/\/+$/, "");
   if (!np || op === np) return;
-  const affected = Object.values(state.docs).filter((d) => d.path.startsWith(op + "/"));
+  const affected = Object.values(sess.docs).filter((d) => d.path.startsWith(op + "/"));
   for (const d of affected) await moveDoc(d.id, np + d.path.slice(op.length));
 }
 
 /** Borra (lógico) todos los docs bajo una carpeta. */
 export async function deleteFolder(prefix: string) {
+  const sess = active();
+  if (!sess) return;
   const p = prefix.replace(/\/+$/, "");
-  const affected = Object.values(state.docs).filter((d) => d.path.startsWith(p + "/"));
-  for (const d of affected) await deleteDoc(d.id, state.author);
+  const affected = Object.values(sess.docs).filter((d) => d.path.startsWith(p + "/"));
+  for (const d of affected) await deleteDoc(d.id, sess.author);
 }
 
 export function docList(): Doc[] {
-  return Object.values(state.docs).sort((a, b) => a.path.localeCompare(b.path));
+  const sess = active();
+  if (!sess) return [];
+  return Object.values(sess.docs).sort((a, b) => a.path.localeCompare(b.path));
 }
 
 export const [browserMode] = createSignal(!isTauri);
 
-// En dev, cerrar SSE + watcher cuando HMR reemplaza este módulo, para no acumular
-// conexiones colgadas que saturan el pool del browser (rompe el sync).
+// En dev, cerrar SSE + watchers + listeners cuando HMR reemplaza este módulo,
+// para no acumular conexiones colgadas que saturan el pool del browser.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    unsubscribe?.();
-    unwatch?.();
+    for (const rt of runtimes.values()) {
+      rt.unsubscribe?.();
+      rt.unwatch?.();
+      for (const t of rt.debounce.values()) clearTimeout(t);
+    }
+    offVaultChange?.();
+    offServerChange?.();
+    offServerStatus?.();
+    netListeners?.();
   });
 }

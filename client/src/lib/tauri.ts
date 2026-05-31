@@ -11,8 +11,13 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return invoke<T>(cmd, args);
 }
 
-// --- stub en memoria para modo browser ---
-const memFiles = new Map<string, string>();
+// --- stub en memoria para modo browser (namespaceado por vault para multi-sesión) ---
+const memVaults = new Map<string, Map<string, string>>();
+function memFilesFor(vault: string): Map<string, string> {
+  let m = memVaults.get(vault);
+  if (!m) memVaults.set(vault, (m = new Map()));
+  return m;
+}
 let memState: { last_seq: number; server_url: string } = {
   last_seq: 0,
   server_url: "http://localhost:4321",
@@ -27,7 +32,7 @@ export async function pickVault(): Promise<string | null> {
 
 export async function vaultWrite(vault: string, path: string, content: string): Promise<void> {
   if (!isTauri) {
-    memFiles.set(path, content);
+    memFilesFor(vault).set(path, content);
     return;
   }
   await invoke("vault_write", { vault, path, content });
@@ -35,7 +40,7 @@ export async function vaultWrite(vault: string, path: string, content: string): 
 
 export async function vaultRemove(vault: string, path: string): Promise<void> {
   if (!isTauri) {
-    memFiles.delete(path);
+    memFilesFor(vault).delete(path);
     return;
   }
   await invoke("vault_remove", { vault, path });
@@ -43,7 +48,7 @@ export async function vaultRemove(vault: string, path: string): Promise<void> {
 
 /** Lee un archivo del vault. Devuelve null si no existe (p.ej. fue borrado). */
 export async function vaultRead(vault: string, path: string): Promise<string | null> {
-  if (!isTauri) return memFiles.get(path) ?? null;
+  if (!isTauri) return memFilesFor(vault).get(path) ?? null;
   try {
     return await invoke<string>("vault_read", { vault, path });
   } catch {
@@ -53,49 +58,61 @@ export async function vaultRead(vault: string, path: string): Promise<string | n
 
 /** Escanea el vault y devuelve los .md preexistentes (path + contenido). */
 export async function vaultScan(vault: string): Promise<{ path: string; content: string }[]> {
-  if (!isTauri) return [...memFiles.entries()].map(([path, content]) => ({ path, content }));
+  if (!isTauri) return [...memFilesFor(vault).entries()].map(([path, content]) => ({ path, content }));
   return invoke<{ path: string; content: string }[]>("vault_scan", { vault });
 }
 
-/** Arranca el watcher del vault en Rust. No-op en modo browser. */
-export async function startWatch(vault: string): Promise<void> {
+/** Arranca el watcher del vault en Rust (tagueado con connId). No-op en browser. */
+export async function startWatch(connId: string, vault: string): Promise<void> {
   if (!isTauri) return;
-  await invoke("start_watch", { vault });
+  await invoke("start_watch", { connId, vault });
 }
 
-/** Se suscribe a cambios de archivos del vault. Devuelve un cleanup. */
-export async function onVaultChange(cb: (paths: string[]) => void): Promise<() => void> {
+/** Detiene el watcher de una conexión en Rust. No-op en modo browser. */
+export async function stopWatch(connId: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("stop_watch", { connId });
+}
+
+/**
+ * Listener global de cambios de archivos: un único listen() despacha por connId.
+ * El store lo registra una sola vez en boot y rutea a la sesión correspondiente.
+ * Devuelve un cleanup. No-op en modo browser.
+ */
+export async function onVaultChange(cb: (connId: string, paths: string[]) => void): Promise<() => void> {
   if (!isTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<string[]>("vault-change", (e) => cb(e.payload));
+  return listen<{ conn_id: string; paths: string[] }>("vault-change", (e) => cb(e.payload.conn_id, e.payload.paths));
 }
 
 // --- Stream SSE del server (lo maneja Rust en Tauri; el webview no streamea). ---
 
-/** Arranca el stream SSE en Rust. No-op en modo browser. */
-export async function startEventStream(serverUrl: string, token: string): Promise<void> {
+/** Arranca el stream SSE en Rust para una conexión. No-op en modo browser. */
+export async function startEventStream(connId: string, serverUrl: string, token: string): Promise<void> {
   if (!isTauri) return;
-  await invoke("start_event_stream", { serverUrl, token });
+  await invoke("start_event_stream", { connId, serverUrl, token });
 }
 
-/** Detiene el stream SSE en Rust. No-op en modo browser. */
-export async function stopEventStream(): Promise<void> {
+/** Detiene el stream SSE de una conexión en Rust. No-op en modo browser. */
+export async function stopEventStream(connId: string): Promise<void> {
   if (!isTauri) return;
-  await invoke("stop_event_stream");
+  await invoke("stop_event_stream", { connId });
 }
 
-/** Cambios del server (seq) emitidos por el stream nativo. Devuelve un cleanup. */
-export async function onServerChange(cb: (seq: number) => void): Promise<() => void> {
+/** Cambios del server (seq) por connId, emitidos por el stream nativo. Cleanup. */
+export async function onServerChange(cb: (connId: string, seq: number) => void): Promise<() => void> {
   if (!isTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<number>("server-change", (e) => cb(e.payload));
+  return listen<{ conn_id: string; seq: number }>("server-change", (e) => cb(e.payload.conn_id, e.payload.seq));
 }
 
-/** Estado de conexión (bool) del stream nativo. Devuelve un cleanup. */
-export async function onServerStatus(cb: (connected: boolean) => void): Promise<() => void> {
+/** Estado de conexión (bool) por connId, del stream nativo. Cleanup. */
+export async function onServerStatus(cb: (connId: string, connected: boolean) => void): Promise<() => void> {
   if (!isTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<boolean>("server-status", (e) => cb(e.payload));
+  return listen<{ conn_id: string; connected: boolean }>("server-status", (e) =>
+    cb(e.payload.conn_id, e.payload.connected),
+  );
 }
 
 // --- config global de la app: conexiones guardadas (carpeta + servidor) ---
@@ -139,4 +156,39 @@ export async function stateSave(vault: string, state: SyncState): Promise<void> 
     return;
   }
   await invoke("state_save", { vault, lastSeq: state.last_seq, serverUrl: state.server_url });
+}
+
+// --- autostart al login (configurable). No-op en browser. ---
+
+export async function getAutostart(): Promise<boolean> {
+  if (!isTauri) return false;
+  try {
+    return await invoke<boolean>("get_autostart");
+  } catch {
+    return false;
+  }
+}
+
+export async function setAutostart(enabled: boolean): Promise<void> {
+  if (!isTauri) return;
+  await invoke("set_autostart", { enabled });
+}
+
+// --- índice de reconciliación offline (.forge/index.json). Blob opaco; el schema vive en reconcile.ts ---
+
+const memIndex = new Map<string, string>();
+
+/** Lee el índice de reconciliación crudo. "" si no existe. */
+export async function indexLoad(vault: string): Promise<string> {
+  if (!isTauri) return memIndex.get(vault) ?? "";
+  return invoke<string>("index_load", { vault });
+}
+
+/** Guarda el índice de reconciliación (atómico en Rust). */
+export async function indexSave(vault: string, data: string): Promise<void> {
+  if (!isTauri) {
+    memIndex.set(vault, data);
+    return;
+  }
+  await invoke("index_save", { vault, data });
 }

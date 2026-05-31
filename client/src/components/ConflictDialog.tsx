@@ -11,6 +11,7 @@ export const ConflictDialog: Component<{
   onKeepMine: () => void;
   onKeepServer: () => void;
   onClose: () => void;
+  label?: string; // p.ej. "vault/archivo.md" para conflictos de sync de fondo
 }> = (props) => {
   return (
     <Dialog open={!!props.conflict} onOpenChange={(o) => !o && props.onClose()}>
@@ -18,6 +19,9 @@ export const ConflictDialog: Component<{
         <DialogHeader>
           <DialogTitle>Conflicto de versión</DialogTitle>
           <DialogDescription>
+            <Show when={props.label}>
+              <span class="font-medium text-foreground">{props.label}</span> ·{" "}
+            </Show>
             Alguien guardó este documento antes que vos. Elegí con qué versión quedarte.
           </DialogDescription>
         </DialogHeader>
