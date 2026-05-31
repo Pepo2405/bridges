@@ -5,7 +5,27 @@ import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { history, defaultKeymap, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
+import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { tags as t } from "@lezer/highlight";
+
+export type LinkTarget = { label: string; path: string };
+
+/** Autocompletado de [[wikilinks]]: al tipear `[[` ofrece los nombres de notas. */
+function wikilinkCompletions(targets: () => LinkTarget[]) {
+  return (ctx: CompletionContext): CompletionResult | null => {
+    const before = ctx.matchBefore(/\[\[[^\]\n]*$/); // `[[` seguido de lo tipeado, sin cerrar
+    if (!before) return null;
+    return {
+      from: before.from + 2, // justo después de `[[`
+      options: targets().map((it) => ({
+        label: it.label,
+        detail: it.path.includes("/") ? it.path.replace(/\/[^/]+$/, "") : undefined,
+        apply: it.label + "]]",
+      })),
+      validFor: /^[^\]\n]*$/,
+    };
+  };
+}
 
 // Resaltado de markdown atado al look de la app. Los colores usan los tokens
 // (hsl(var(--…))) para seguir el tema claro/oscuro.
@@ -59,6 +79,7 @@ const theme = EditorView.theme({
 export const MarkdownEditor: Component<{
   value: string;
   readOnly?: boolean;
+  linkTargets?: () => LinkTarget[];
   onChange: (v: string) => void;
   onSave?: () => void;
 }> = (props) => {
@@ -83,6 +104,7 @@ export const MarkdownEditor: Component<{
           markdown(),
           syntaxHighlighting(mdHighlight),
           wikilinkPlugin,
+          autocompletion({ override: [wikilinkCompletions(() => props.linkTargets?.() ?? [])], activateOnTyping: true }),
           EditorView.lineWrapping,
           theme,
           editable.of([EditorView.editable.of(!props.readOnly), EditorState.readOnly.of(!!props.readOnly)]),

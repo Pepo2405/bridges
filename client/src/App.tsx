@@ -39,7 +39,7 @@ import {
   setNotice,
 } from "~/lib/store";
 import { buildTree, renderMarkdown, setWikiResolver } from "~/lib/markdown";
-import { buildBacklinks, createResolver } from "~/lib/links";
+import { buildBacklinks, createResolver, displayName } from "~/lib/links";
 import type { Doc, SearchHit } from "~/lib/api";
 import { FileTree, type TreeAction } from "~/components/FileTree";
 import type { TreeNode } from "~/lib/markdown";
@@ -836,6 +836,7 @@ const App: Component = () => {
                       <MarkdownEditor
                         value={draft()}
                         readOnly={!state.perms.write}
+                        linkTargets={() => docs().map((d) => ({ label: displayName(d.path), path: d.path }))}
                         onChange={(v) => {
                           setDraft(v);
                           setDirty(true);
