@@ -45,6 +45,7 @@ import { Backlinks } from "~/components/Backlinks";
 import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Tooltip, TooltipTrigger, TooltipContent } from "~/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -67,14 +68,17 @@ const NO_DELETE = "Tu token no tiene permiso para borrar en este vault.";
 
 /**
  * Envuelve un control: si `when` es falso, lo muestra deshabilitado con un
- * tooltip explicando por qué. Un botón con `disabled` corta los eventos de
- * hover, así que el tooltip va en un <span> contenedor que sí los recibe.
+ * tooltip explicando por qué. El trigger es un <span> (no el botón) porque un
+ * botón con pointer-events cortados no recibe el hover que dispara el tooltip.
  */
 const Gated: Component<ParentProps<{ when: boolean; reason: string }>> = (props) => (
   <Show when={props.when} fallback={
-    <span class="inline-flex cursor-not-allowed" title={props.reason}>
-      <span class="pointer-events-none opacity-50">{props.children}</span>
-    </span>
+    <Tooltip openDelay={150}>
+      <TooltipTrigger as="span" class="inline-flex cursor-not-allowed">
+        <span class="pointer-events-none opacity-50">{props.children}</span>
+      </TooltipTrigger>
+      <TooltipContent>{props.reason}</TooltipContent>
+    </Tooltip>
   }>
     {props.children}
   </Show>
