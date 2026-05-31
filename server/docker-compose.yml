@@ -4,15 +4,17 @@
 services:
   forge:
     build: .
-    ports:
-      - "4321:4321"
+    # `expose` (no `ports`): Coolify rutea via su proxy (Traefik) sin bindear
+    # un puerto del host. El routing externo + HTTPS los maneja Coolify.
+    expose:
+      - "4321"
     environment:
       FORGE_DB: /data/forge.db
       FORGE_VAULT: /data/vault
       PORT: "4321"
-      # Admin de arranque opcional (escape hatch para el primer login).
-      # Mejor dejarlo vacío y crear tokens con el CLI una vez levantado.
-      # FORGE_TOKEN: ${FORGE_TOKEN}
+      # Admin de arranque: se setea como env en Coolify. Vacío por defecto para
+      # `docker compose up` local (con tabla vacía y sin esto, la auth queda off).
+      FORGE_TOKEN: ${FORGE_TOKEN:-}
     volumes:
       - forge-data:/data
     restart: unless-stopped
