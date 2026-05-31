@@ -8,6 +8,10 @@ import {
   vaultRead,
   startWatch,
   onVaultChange,
+  startEventStream,
+  stopEventStream,
+  onServerChange,
+  onServerStatus,
   stateSave,
   configLoad,
   configSave,
@@ -127,13 +131,28 @@ export async function connect(opts: { vault: string; serverUrl?: string; token?:
   await pull({ throwOnError: true });
   setState("ready", true);
 
+  // Sync en vivo: en Tauri el stream SSE lo maneja Rust (el WKWebView no entrega
+  // respuestas long-lived al JS); en modo browser, fetch-streaming directo.
   unsubscribe?.();
-  unsubscribe = api.subscribe(
-    (seq) => {
+  if (isTauri) {
+    await startEventStream(serverUrl, opts.token ?? "");
+    const offChange = await onServerChange((seq) => {
       if (seq > state.lastSeq) pull();
-    },
-    (connected) => setState("connected", connected),
-  );
+    });
+    const offStatus = await onServerStatus((connected) => setState("connected", connected));
+    unsubscribe = () => {
+      offChange();
+      offStatus();
+      stopEventStream();
+    };
+  } else {
+    unsubscribe = api.subscribe(
+      (seq) => {
+        if (seq > state.lastSeq) pull();
+      },
+      (connected) => setState("connected", connected),
+    );
+  }
 
   // Sync bidireccional: vigilar la carpeta y pushear ediciones externas.
   // Se arranca DESPUÉS del primer pull para no procesar las escrituras del propio espejo.

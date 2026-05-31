@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use futures_util::StreamExt;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -9,6 +12,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 /// Mantiene vivo el watcher del vault (si se dropea, deja de observar).
 #[derive(Default)]
 struct WatcherState(Mutex<Option<RecommendedWatcher>>);
+
+/// Generación del stream SSE activo. Cada start incrementa el contador; el task
+/// en curso se detiene cuando ve que la generación cambió (reconexión/disconnect).
+#[derive(Default)]
+struct StreamState(Arc<AtomicU64>);
 
 #[derive(Serialize, Deserialize)]
 struct SyncState {
@@ -158,11 +166,77 @@ fn config_save(app: AppHandle, data: String) -> Result<(), String> {
     fs::write(&p, data).map_err(|e| e.to_string())
 }
 
+/// Detiene el stream SSE actual (invalida su generación).
+#[tauri::command]
+fn stop_event_stream(state: State<StreamState>) {
+    state.0.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Abre `{server_url}/events` desde Rust (con `Authorization: Bearer`), parsea el
+/// SSE y emite eventos Tauri: `server-status` (bool conectado) y `server-change`
+/// (seq). Reconecta con backoff. Se hace en Rust porque el WKWebView no entrega
+/// respuestas long-lived al JS (ni con EventSource ni con fetch streaming).
+#[tauri::command]
+fn start_event_stream(app: AppHandle, state: State<StreamState>, server_url: String, token: String) {
+    let my_gen = state.0.fetch_add(1, Ordering::SeqCst) + 1;
+    let generation = state.0.clone();
+    let url = format!("{}/events", server_url.trim_end_matches('/'));
+
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::new();
+        while generation.load(Ordering::SeqCst) == my_gen {
+            let mut req = client.get(&url);
+            if !token.is_empty() {
+                req = req.header("Authorization", format!("Bearer {token}"));
+            }
+
+            match req.send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = app.emit("server-status", true);
+                    let mut stream = resp.bytes_stream();
+                    let mut buf = String::new();
+                    while let Some(chunk) = stream.next().await {
+                        if generation.load(Ordering::SeqCst) != my_gen {
+                            return;
+                        }
+                        let Ok(bytes) = chunk else { break };
+                        buf.push_str(&String::from_utf8_lossy(&bytes));
+                        // Eventos SSE separados por línea en blanco.
+                        while let Some(idx) = buf.find("\n\n") {
+                            let evt: String = buf.drain(..idx + 2).collect();
+                            for line in evt.lines() {
+                                let Some(data) = line.strip_prefix("data:") else { continue };
+                                let Ok(v) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
+                                    continue;
+                                };
+                                if v.get("type").and_then(|t| t.as_str()) == Some("change") {
+                                    if let Some(seq) = v.get("seq").and_then(|s| s.as_i64()) {
+                                        let _ = app.emit("server-change", seq);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            // Desconectado o error: avisar y reconectar (si seguimos vigentes).
+            if generation.load(Ordering::SeqCst) != my_gen {
+                return;
+            }
+            let _ = app.emit("server-status", false);
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(WatcherState::default())
+        .manage(StreamState::default())
         .invoke_handler(tauri::generate_handler![
             vault_write,
             vault_remove,
@@ -171,7 +245,9 @@ pub fn run() {
             state_load,
             state_save,
             config_load,
-            config_save
+            config_save,
+            start_event_stream,
+            stop_event_stream
         ])
         .run(tauri::generate_context!())
         .expect("error al arrancar Forge");

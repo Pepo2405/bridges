@@ -64,6 +64,34 @@ export async function onVaultChange(cb: (paths: string[]) => void): Promise<() =
   return listen<string[]>("vault-change", (e) => cb(e.payload));
 }
 
+// --- Stream SSE del server (lo maneja Rust en Tauri; el webview no streamea). ---
+
+/** Arranca el stream SSE en Rust. No-op en modo browser. */
+export async function startEventStream(serverUrl: string, token: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("start_event_stream", { serverUrl, token });
+}
+
+/** Detiene el stream SSE en Rust. No-op en modo browser. */
+export async function stopEventStream(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("stop_event_stream");
+}
+
+/** Cambios del server (seq) emitidos por el stream nativo. Devuelve un cleanup. */
+export async function onServerChange(cb: (seq: number) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<number>("server-change", (e) => cb(e.payload));
+}
+
+/** Estado de conexión (bool) del stream nativo. Devuelve un cleanup. */
+export async function onServerStatus(cb: (connected: boolean) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<boolean>("server-status", (e) => cb(e.payload));
+}
+
 // --- config global de la app: conexiones guardadas (carpeta + servidor) ---
 
 export type Connection = { vault: string; serverUrl: string; token?: string; openedAt: string };
