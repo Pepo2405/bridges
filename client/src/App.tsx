@@ -26,7 +26,9 @@ import {
   moveDoc,
   renameFolder,
   deleteFolder,
-  chooseVaultAndConnect,
+  pickVaultAndInspect,
+  importLocalDocs,
+  type VaultInspection,
   connect,
   disconnect,
   removeConnection,
@@ -110,12 +112,35 @@ const ConnectionManager: Component = () => {
     }
   };
 
+  const [pending, setPending] = createSignal<VaultInspection | null>(null);
+
   const addNew = async () => {
     setBusy("new");
     setErr(null);
     try {
-      const ok = await chooseVaultAndConnect(serverUrl(), token().trim() || undefined);
-      if (!ok) setErr("No elegiste ninguna carpeta.");
+      const insp = await pickVaultAndInspect(serverUrl(), token().trim() || undefined);
+      if (!insp) {
+        setErr("No elegiste ninguna carpeta.");
+      } else if (insp.localOnly.length || insp.conflicts.length) {
+        setPending(insp); // hay notas locales o colisiones: que el usuario decida
+      } else {
+        await connect({ vault: insp.vault, serverUrl: insp.serverUrl, token: insp.token });
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const finishConnect = async (doImport: boolean) => {
+    const p = pending();
+    if (!p) return;
+    setBusy("new");
+    setPending(null);
+    try {
+      await connect({ vault: p.vault, serverUrl: p.serverUrl, token: p.token });
+      if (doImport) await importLocalDocs(p.localOnly);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -124,6 +149,7 @@ const ConnectionManager: Component = () => {
   };
 
   return (
+    <>
     <div class="flex h-full items-center justify-center p-6">
       <div class="w-full max-w-md rounded-lg border bg-card p-6 shadow-sm">
         <div class="mb-1 flex items-center gap-2">
@@ -194,6 +220,64 @@ const ConnectionManager: Component = () => {
         </Show>
       </div>
     </div>
+
+    <Dialog open={!!pending()} onOpenChange={(o) => !o && setPending(null)}>
+      <DialogContent class="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Esta carpeta ya tiene notas</DialogTitle>
+          <DialogDescription>
+            Antes de conectar, decidí qué hacer con los archivos que ya están en la carpeta.
+          </DialogDescription>
+        </DialogHeader>
+
+        <Show when={pending()?.localOnly.length}>
+          <div class="rounded-md border p-3 text-sm">
+            <p class="mb-1 font-medium">
+              {pending()!.localOnly.length} nota{pending()!.localOnly.length === 1 ? "" : "s"} local
+              {pending()!.localOnly.length === 1 ? "" : "es"} que no está
+              {pending()!.localOnly.length === 1 ? "" : "n"} en el server.
+            </p>
+            <p class="text-xs text-muted-foreground">
+              Importalas (se suben al server) o dejalas como están (no aparecen en Forge hasta editarlas).
+            </p>
+          </div>
+        </Show>
+
+        <Show when={pending()?.conflicts.length}>
+          <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            <p class="mb-1 font-medium text-amber-600">
+              {pending()!.conflicts.length} archivo{pending()!.conflicts.length === 1 ? "" : "s"} se
+              reemplazará{pending()!.conflicts.length === 1 ? "" : "n"} con la versión del server:
+            </p>
+            <ul class="mt-1 max-h-24 overflow-auto text-xs text-muted-foreground">
+              <For each={pending()!.conflicts}>{(c) => <li class="truncate">· {c.path}</li>}</For>
+            </ul>
+          </div>
+        </Show>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setPending(null)} disabled={!!busy()}>
+            Cancelar
+          </Button>
+          <Show
+            when={pending()?.localOnly.length}
+            fallback={
+              <Button onClick={() => finishConnect(false)} disabled={!!busy()}>
+                Conectar
+              </Button>
+            }
+          >
+            <Button variant="outline" onClick={() => finishConnect(false)} disabled={!!busy()}>
+              Conectar sin importar
+            </Button>
+            <Button onClick={() => finishConnect(true)} disabled={!!busy()}>
+              Importar y conectar
+            </Button>
+          </Show>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 };
 

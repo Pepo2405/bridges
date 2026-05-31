@@ -75,6 +75,46 @@ fn vault_read(vault: String, path: String) -> Result<String, String> {
     fs::read_to_string(&abs).map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+struct ScannedDoc {
+    path: String,
+    content: String,
+}
+
+/// Escanea el vault y devuelve todos los .md (path relativo + contenido).
+/// Ignora ocultos (empiezan con '.') y node_modules. Sirve para detectar
+/// notas locales preexistentes al conectar.
+#[tauri::command]
+fn vault_scan(vault: String) -> Result<Vec<ScannedDoc>, String> {
+    let root = PathBuf::from(&vault);
+    let mut out = Vec::new();
+    scan_dir(&root, &root, &mut out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScannedDoc>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || name == "node_modules" {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            scan_dir(root, &path, out)?;
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            if let (Ok(content), Ok(rel)) = (fs::read_to_string(&path), path.strip_prefix(root)) {
+                out.push(ScannedDoc {
+                    path: rel.to_string_lossy().replace('\\', "/"),
+                    content,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Observa el vault y emite "vault-change" con las rutas .md afectadas (relativas).
 /// Ignora .forge/, .obsidian/ y cualquier componente que empiece con punto.
 #[tauri::command]
@@ -242,6 +282,7 @@ pub fn run() {
             vault_write,
             vault_remove,
             vault_read,
+            vault_scan,
             start_watch,
             state_load,
             state_save,

@@ -51,6 +51,12 @@ export async function vaultRead(vault: string, path: string): Promise<string | n
   }
 }
 
+/** Escanea el vault y devuelve los .md preexistentes (path + contenido). */
+export async function vaultScan(vault: string): Promise<{ path: string; content: string }[]> {
+  if (!isTauri) return [...memFiles.entries()].map(([path, content]) => ({ path, content }));
+  return invoke<{ path: string; content: string }[]>("vault_scan", { vault });
+}
+
 /** Arranca el watcher del vault en Rust. No-op en modo browser. */
 export async function startWatch(vault: string): Promise<void> {
   if (!isTauri) return;

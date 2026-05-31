@@ -6,6 +6,7 @@ import {
   vaultWrite,
   vaultRemove,
   vaultRead,
+  vaultScan,
   startWatch,
   onVaultChange,
   startEventStream,
@@ -348,11 +349,46 @@ async function findMovedDoc(vault: string, content: string, newPath: string): Pr
   return null;
 }
 
-export async function chooseVaultAndConnect(serverUrl?: string, token?: string) {
+export type VaultInspection = {
+  vault: string;
+  serverUrl: string;
+  token?: string;
+  localOnly: { path: string; content: string }[]; // .md locales que no están en el server (importables)
+  conflicts: { path: string }[]; // mismo path, distinto contenido (el server pisaría al local)
+};
+
+/**
+ * Elige una carpeta y la compara con el server SIN escribir nada: detecta notas
+ * locales preexistentes (para ofrecer importarlas) y colisiones (que el pull
+ * sobrescribiría). Devuelve null si no se eligió carpeta.
+ */
+export async function pickVaultAndInspect(serverUrlRaw?: string, token?: string): Promise<VaultInspection | null> {
   const vault = await pickVault();
-  if (!vault) return false;
-  await connect({ vault, serverUrl, token });
-  return true;
+  if (!vault) return null;
+  const serverUrl = (serverUrlRaw ?? state.serverUrl).replace(/\/$/, "");
+  api.setBase(serverUrl);
+  api.setToken(token ?? null);
+  await api.health();
+  const [local, sync] = await Promise.all([vaultScan(vault), api.sync(0)]);
+  const serverByPath = new Map(sync.documents.filter((d) => !d.deleted).map((d) => [d.path, d.content]));
+  const localOnly: { path: string; content: string }[] = [];
+  const conflicts: { path: string }[] = [];
+  for (const f of local) {
+    if (!serverByPath.has(f.path)) localOnly.push(f);
+    else if (serverByPath.get(f.path) !== f.content) conflicts.push({ path: f.path });
+  }
+  return { vault, serverUrl, token, localOnly, conflicts };
+}
+
+/** Sube al server las notas locales elegidas. Permiso/red/409 → saltea sin abortar el resto. */
+export async function importLocalDocs(docs: { path: string; content: string }[]) {
+  for (const d of docs) {
+    try {
+      await saveDoc({ path: d.path, content: d.content }, state.author);
+    } catch {
+      /* saltear */
+    }
+  }
 }
 
 // --- mutaciones (push al server; el SSE/pull refleja el resultado) ---
