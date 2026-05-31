@@ -106,19 +106,59 @@ export class ForgeApi {
 
   /** Se suscribe a /events. Llama onChange(seq) por cada evento de cambio. Devuelve un cleanup. */
   subscribe(onChange: (seq: number) => void, onStatus?: (connected: boolean) => void): () => void {
-    // EventSource no puede mandar headers: el token va por query param.
-    const evUrl = this.token ? this.url(`/events?token=${encodeURIComponent(this.token)}`) : this.url("/events");
-    const es = new EventSource(evUrl);
-    es.onmessage = (ev) => {
+    // No usamos EventSource: en el WKWebView de macOS no entrega eventos cuando el
+    // stream va sobre HTTP/2 (abre la conexión pero nunca dispara onopen/onmessage).
+    // Leemos el stream con fetch + ReadableStream, que sí funciona sobre h2; además
+    // el token viaja por header Authorization (no por query param).
+    const ctrl = new AbortController();
+    let closed = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+
+    const run = async () => {
       try {
-        const data = JSON.parse(ev.data);
-        if (data.type === "change") onChange(data.seq);
+        const r = await fetch(this.url("/events"), {
+          headers: this.headers({ accept: "text/event-stream" }),
+          signal: ctrl.signal,
+        });
+        if (!r.ok || !r.body) throw new Error(`events ${r.status}`);
+        onStatus?.(true);
+
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        while (!closed) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          // Eventos SSE separados por línea en blanco.
+          let sep: number;
+          while ((sep = buf.indexOf("\n\n")) !== -1) {
+            const evt = buf.slice(0, sep);
+            buf = buf.slice(sep + 2);
+            for (const line of evt.split("\n")) {
+              if (!line.startsWith("data:")) continue; // ": ping" u otros: ignorar
+              try {
+                const data = JSON.parse(line.slice(5).trim());
+                if (data.type === "change") onChange(data.seq);
+              } catch {
+                /* no-JSON: ignorar */
+              }
+            }
+          }
+        }
       } catch {
-        /* keep-alive ping u otro: ignorar */
+        /* error de red / abort: cae a reconexión */
       }
+      if (closed) return;
+      onStatus?.(false);
+      retry = setTimeout(run, 3000); // reconectar
     };
-    es.onopen = () => onStatus?.(true);
-    es.onerror = () => onStatus?.(false);
-    return () => es.close();
+
+    run();
+    return () => {
+      closed = true;
+      clearTimeout(retry);
+      ctrl.abort();
+    };
   }
 }
