@@ -59,6 +59,7 @@ La fuente de verdad son **archivos `.md` en disco**. El servidor mantiene la cop
 
 ### Resuelto
 
+- **Sync en vivo (SSE) en la app de escritorio**: el WKWebView de macOS no entrega respuestas long-lived al JS (ni `EventSource` ni `fetch` streaming) sobre HTTP/2. Se movió el stream a Rust (`start_event_stream` en `src-tauri/src/lib.rs`): abre `/events` con reqwest, parsea el SSE y emite eventos Tauri (`server-change`/`server-status`) que el frontend escucha. En modo browser se usa fetch-streaming.
 - **App empaquetada (.dmg)** para macOS Apple Silicon. Ver [Empaquetar](#empaquetar-dmg).
 - **Auth multi-token con permisos (RBAC)** + deploy con Docker. Ver [Auth](#auth) y [Deploy](#deploy).
 - Edición externa del doc abierto: si llega una edición externa/SSE del *mismo* doc mientras tenés cambios sin guardar, ya no se pisa el borrador. El `createEffect` de carga (`App.tsx`) distingue cambio de selección (carga fresca) de actualización externa: sin borrador refleja la edición; con borrador abre el `ConflictDialog` para resolver.
