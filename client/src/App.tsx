@@ -646,14 +646,23 @@ const App: Component = () => {
           {/* Editor + Preview / Grafo */}
           <main class="flex min-w-0 flex-1 flex-col">
             <Show when={view() === "editor"} fallback={
-              <GraphView
-                docs={docs()}
-                selectedId={selectedId()}
-                onSelect={(id) => {
-                  setSelectedId(id);
-                  setView("editor");
-                }}
-              />
+              <Show
+                when={docs().length}
+                fallback={
+                  <div class="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                    No hay notas para graficar.
+                  </div>
+                }
+              >
+                <GraphView
+                  docs={docs()}
+                  selectedId={selectedId()}
+                  onSelect={(id) => {
+                    setSelectedId(id);
+                    setView("editor");
+                  }}
+                />
+              </Show>
             }>
             <Show
               when={current()}

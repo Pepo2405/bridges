@@ -115,7 +115,10 @@ export async function pull(opts?: { throwOnError?: boolean }) {
   } catch (e) {
     const msg = authMessage(e, "leer este vault") ?? `Sync falló: ${String(e)}`;
     setState("error", msg);
+    // El connect inicial propaga (lo muestra el gestor de conexiones). Un sync
+    // de fondo, en cambio, fallaba en silencio: lo avisamos con un toast.
     if (opts?.throwOnError) throw new Error(msg);
+    else setNotice(msg);
   } finally {
     setState("syncing", false);
   }
