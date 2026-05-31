@@ -51,15 +51,21 @@ export type Doc = {
   version: number;
   seq: number;
   deleted: number;
+  updated_by: string | null;
+  updated_at: string;
 };
+
+export type Change = { seq: number; author: string | null; action: string; created_at: string };
 
 const qNextSeq = db.query<{ last_seq: number }, []>(
   "UPDATE meta SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq",
 );
-const qDocById = db.query<Doc, [string]>("SELECT id, path, title, content, version, seq, deleted FROM documents WHERE id = ?");
-const qDocByPath = db.query<Doc, [string]>("SELECT id, path, title, content, version, seq, deleted FROM documents WHERE path = ?");
-const qSince = db.query<Doc, [number]>(
-  "SELECT id, path, title, content, version, seq, deleted FROM documents WHERE seq > ? ORDER BY seq ASC",
+const DOC_COLS = "id, path, title, content, version, seq, deleted, updated_by, updated_at";
+const qDocById = db.query<Doc, [string]>(`SELECT ${DOC_COLS} FROM documents WHERE id = ?`);
+const qDocByPath = db.query<Doc, [string]>(`SELECT ${DOC_COLS} FROM documents WHERE path = ?`);
+const qSince = db.query<Doc, [number]>(`SELECT ${DOC_COLS} FROM documents WHERE seq > ? ORDER BY seq ASC`);
+const qHistory = db.query<Change, [string]>(
+  "SELECT seq, author, action, created_at FROM changes WHERE doc_id = ? ORDER BY seq DESC LIMIT 100",
 );
 const qLastSeq = db.query<{ last_seq: number }, []>("SELECT last_seq FROM meta WHERE id = 1");
 const qInsert = db.query(
@@ -87,6 +93,11 @@ export function getDocByPath(path: string): Doc | null {
 
 export function getLastSeq(): number {
   return qLastSeq.get()!.last_seq;
+}
+
+/** Historial de cambios de un doc (más reciente primero, hasta 100). */
+export function getHistory(id: string): Change[] {
+  return qHistory.all(id);
 }
 
 export function syncSince(since: number): { documents: Doc[]; last_seq: number } {

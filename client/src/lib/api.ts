@@ -8,7 +8,11 @@ export type Doc = {
   version: number;
   seq: number;
   deleted: number;
+  updated_by: string | null;
+  updated_at: string;
 };
+
+export type Change = { seq: number; author: string | null; action: string; created_at: string };
 
 export type SyncResponse = { documents: Doc[]; last_seq: number };
 export type SearchHit = { id: string; path: string; title: string | null; snippet: string };
@@ -94,6 +98,12 @@ export class ForgeApi {
     } finally {
       clearTimeout(t);
     }
+  }
+
+  async history(id: string): Promise<Change[]> {
+    const r = await fetch(this.url(`/documents/${encodeURIComponent(id)}/history`), { headers: this.headers() });
+    if (!r.ok) throw new ApiError(r.status, `history ${r.status}`);
+    return (await r.json()).history;
   }
 
   async search(q: string): Promise<SearchHit[]> {

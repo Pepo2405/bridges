@@ -20,6 +20,7 @@ import {
   Sun,
   Moon,
   List,
+  History,
 } from "lucide-solid";
 import {
   state,
@@ -53,6 +54,8 @@ import { TokenManager } from "~/components/TokenManager";
 import { MarkdownEditor } from "~/components/MarkdownEditor";
 import { ConfirmHost } from "~/components/ConfirmHost";
 import { CommandPalette, type Command } from "~/components/CommandPalette";
+import { HistoryDialog } from "~/components/HistoryDialog";
+import { relativeTime } from "~/lib/time";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -441,6 +444,7 @@ const App: Component = () => {
   const [showNew, setShowNew] = createSignal(false);
   const [showTokens, setShowTokens] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
+  const [historyDocId, setHistoryDocId] = createSignal<string | null>(null);
   const [newPrefill, setNewPrefill] = createSignal("");
   const [renameTarget, setRenameTarget] = createSignal<RenameTarget | null>(null);
   const [mode, setMode] = createSignal<"edit" | "preview">("edit");
@@ -863,6 +867,11 @@ const App: Component = () => {
                       <span class="h-1.5 w-1.5 rounded-full bg-amber-500" title="Cambios sin guardar" />
                     </Show>
                     <span class="text-xs text-muted-foreground">v{baseVersion()}</span>
+                    <Show when={doc().updated_by}>
+                      <span class="hidden text-xs text-muted-foreground md:inline">
+                        · {doc().updated_by} · {relativeTime(doc().updated_at)}
+                      </span>
+                    </Show>
                     <div class="ml-auto flex items-center gap-1.5">
                       <Show when={mode() === "edit" && outline().length}>
                         <DropdownMenu>
@@ -907,6 +916,9 @@ const App: Component = () => {
                           Vista previa
                         </button>
                       </div>
+                      <Button size="sm" variant="ghost" onClick={() => setHistoryDocId(doc().id)} title="Historial">
+                        <History class="h-4 w-4" />
+                      </Button>
                       <Gated when={state.perms.delete} reason={NO_DELETE}>
                         <Button size="sm" variant="ghost" onClick={onDelete} title="Eliminar">
                           <Trash2 class="h-4 w-4 text-destructive" />
@@ -959,6 +971,11 @@ const App: Component = () => {
       <NewDocDialog open={showNew()} initial={newPrefill()} onOpenChange={setShowNew} onCreate={onCreate} />
       <TokenManager open={showTokens()} onOpenChange={setShowTokens} />
       <CommandPalette open={showPalette()} onOpenChange={setShowPalette} commands={commands} />
+      <HistoryDialog
+        docId={historyDocId()}
+        path={historyDocId() ? state.docs[historyDocId()!]?.path : undefined}
+        onClose={() => setHistoryDocId(null)}
+      />
       <ConfirmHost />
       <RenameDialog target={renameTarget()} onClose={() => setRenameTarget(null)} onSubmit={onRenameSubmit} />
       <ConflictDialog

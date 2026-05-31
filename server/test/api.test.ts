@@ -106,6 +106,28 @@ describe("server con auth (admin bootstrap)", () => {
     expect(body.server.content).toBe("v2");
   });
 
+  test("history registra create + update (más reciente primero)", async () => {
+    const created = await (
+      await fetch(`${base}/documents`, {
+        method: "POST",
+        headers: jsonHeaders(ADMIN),
+        body: JSON.stringify({ path: "hist.md", content: "v1", author: "t" }),
+      })
+    ).json();
+    await fetch(`${base}/documents/${created.id}`, {
+      method: "POST",
+      headers: jsonHeaders(ADMIN),
+      body: JSON.stringify({ path: "hist.md", content: "v2", base_version: 1, author: "t" }),
+    });
+    const { history } = await (
+      await fetch(`${base}/documents/${created.id}/history`, { headers: bearer(ADMIN) })
+    ).json();
+    expect(history.length).toBe(2);
+    expect(history[0].action).toBe("update");
+    expect(history[1].action).toBe("create");
+    expect(history[0].author).toBe("t");
+  });
+
   test("admin gestiona tokens; editor queda bloqueado donde corresponde", async () => {
     // crear token editor
     const created = await (

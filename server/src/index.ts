@@ -4,6 +4,7 @@ import {
   deleteDoc,
   syncSince,
   getLastSeq,
+  getHistory,
   ConflictError,
   NotFoundError,
 } from "./db";
@@ -190,6 +191,12 @@ const server = Bun.serve({
         if (e instanceof ConflictError) return json({ conflict: true, error: e.message, server: e.server }, 409);
         return json({ error: String(e) }, 400);
       }
+    }
+
+    // --- Historial: GET /documents/:id/history ---
+    const histMatch = pathname.match(/^\/documents\/([^/]+)\/history$/);
+    if (histMatch && req.method === "GET") {
+      return json({ history: getHistory(decodeURIComponent(histMatch[1])) });
     }
 
     // --- Update / Delete sobre /documents/:id ---
