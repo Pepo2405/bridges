@@ -218,7 +218,8 @@ fn start_event_stream(app: AppHandle, state: State<StreamState>, server_url: Str
                         }
                     }
                 }
-                _ => {}
+                Ok(resp) => eprintln!("[sse] respuesta no-ok: status={}", resp.status()),
+                Err(e) => eprintln!("[sse] error de conexión: {e}"),
             }
 
             // Desconectado o error: avisar y reconectar (si seguimos vigentes).

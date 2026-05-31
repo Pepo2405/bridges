@@ -134,24 +134,30 @@ export async function connect(opts: { vault: string; serverUrl?: string; token?:
   // Sync en vivo: en Tauri el stream SSE lo maneja Rust (el WKWebView no entrega
   // respuestas long-lived al JS); en modo browser, fetch-streaming directo.
   unsubscribe?.();
+  const onStatus = (connected: boolean) => {
+    setState("connected", connected);
+    // Al (re)conectar, pull de catch-up: recupera cambios perdidos en el gap
+    // entre el pull inicial y que el stream quede vivo (el primer evento tras
+    // conectar puede bufferearse). Idempotente.
+    if (connected) pull();
+  };
   if (isTauri) {
-    await startEventStream(serverUrl, opts.token ?? "");
+    // Listeners ANTES de arrancar el stream: Rust emite server-status apenas
+    // conecta y, si no estuviéramos escuchando, perderíamos ese primer evento.
     const offChange = await onServerChange((seq) => {
       if (seq > state.lastSeq) pull();
     });
-    const offStatus = await onServerStatus((connected) => setState("connected", connected));
+    const offStatus = await onServerStatus(onStatus);
+    await startEventStream(serverUrl, opts.token ?? "");
     unsubscribe = () => {
       offChange();
       offStatus();
       stopEventStream();
     };
   } else {
-    unsubscribe = api.subscribe(
-      (seq) => {
-        if (seq > state.lastSeq) pull();
-      },
-      (connected) => setState("connected", connected),
-    );
+    unsubscribe = api.subscribe((seq) => {
+      if (seq > state.lastSeq) pull();
+    }, onStatus);
   }
 
   // Sync bidireccional: vigilar la carpeta y pushear ediciones externas.
