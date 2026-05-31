@@ -47,6 +47,7 @@ import { GraphView } from "~/components/GraphView";
 import { Backlinks } from "~/components/Backlinks";
 import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { TokenManager } from "~/components/TokenManager";
+import { MarkdownEditor } from "~/components/MarkdownEditor";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Tooltip, TooltipTrigger, TooltipContent } from "~/components/ui/tooltip";
@@ -428,7 +429,7 @@ const App: Component = () => {
   const [showTokens, setShowTokens] = createSignal(false);
   const [newPrefill, setNewPrefill] = createSignal("");
   const [renameTarget, setRenameTarget] = createSignal<RenameTarget | null>(null);
-  const [showPreview, setShowPreview] = createSignal(true);
+  const [mode, setMode] = createSignal<"edit" | "preview">("edit");
   const [query, setQuery] = createSignal("");
   const [hits, setHits] = createSignal<SearchHit[]>([]);
   const [view, setView] = createSignal<"editor" | "graph">("editor");
@@ -783,14 +784,28 @@ const App: Component = () => {
                     </Show>
                     <span class="text-xs text-muted-foreground">v{baseVersion()}</span>
                     <div class="ml-auto flex items-center gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setShowPreview((p) => !p)}
-                        title={showPreview() ? "Ocultar preview" : "Mostrar preview"}
-                      >
-                        {showPreview() ? <Pencil class="h-4 w-4" /> : <Eye class="h-4 w-4" />}
-                      </Button>
+                      <div class="flex items-center rounded-md border p-0.5">
+                        <button
+                          onClick={() => setMode("edit")}
+                          class={cn(
+                            "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+                            mode() === "edit" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          <Pencil class="h-3.5 w-3.5" />
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => setMode("preview")}
+                          class={cn(
+                            "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+                            mode() === "preview" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          <Eye class="h-3.5 w-3.5" />
+                          Vista previa
+                        </button>
+                      </div>
                       <Gated when={state.perms.delete} reason={NO_DELETE}>
                         <Button size="sm" variant="ghost" onClick={onDelete} title="Eliminar">
                           <Trash2 class="h-4 w-4 text-destructive" />
@@ -806,29 +821,27 @@ const App: Component = () => {
                   </div>
 
                   <div class="flex min-h-0 flex-1">
-                    <textarea
-                      class={cn(
-                        "min-h-0 flex-1 resize-none bg-background p-4 font-mono text-sm leading-relaxed outline-none",
-                        showPreview() && "border-r",
-                      )}
-                      value={draft()}
-                      spellcheck={false}
-                      readOnly={!state.perms.write}
-                      onInput={(e) => {
-                        setDraft(e.currentTarget.value);
-                        setDirty(true);
-                      }}
-                      onKeyDown={(e) => {
-                        if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-                          e.preventDefault();
-                          onSave();
-                        }
-                      }}
-                    />
-                    <Show when={showPreview()}>
-                      <div class="min-h-0 flex-1 overflow-auto p-4">
-                        <div class="prose-forge" innerHTML={preview()} onClick={onPreviewClick} />
-                      </div>
+                    <Show
+                      when={mode() === "edit"}
+                      fallback={
+                        <div class="min-h-0 flex-1 overflow-auto">
+                          <div
+                            class="prose-forge mx-auto max-w-3xl px-5 py-7"
+                            innerHTML={preview()}
+                            onClick={onPreviewClick}
+                          />
+                        </div>
+                      }
+                    >
+                      <MarkdownEditor
+                        value={draft()}
+                        readOnly={!state.perms.write}
+                        onChange={(v) => {
+                          setDraft(v);
+                          setDirty(true);
+                        }}
+                        onSave={onSave}
+                      />
                     </Show>
                   </div>
                   <Backlinks backlinks={currentBacklinks()} onSelect={select} />
