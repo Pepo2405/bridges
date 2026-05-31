@@ -58,8 +58,6 @@ import {
 } from "~/components/ui/dialog";
 import { cn } from "~/lib/utils";
 
-const AUTHOR = "yo"; // MVP: sin auth real
-
 function vaultName(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
 }
@@ -404,7 +402,7 @@ const App: Component = () => {
     try {
       const res = await saveDoc(
         { id: doc.id, path: doc.path, content: draft(), base_version: baseVersion() },
-        AUTHOR,
+        state.author,
       );
       if ("conflict" in res) {
         setConflict({ local: draft(), server: res.server });
@@ -422,13 +420,13 @@ const App: Component = () => {
     const doc = current();
     if (!doc) return;
     if (!confirm(`¿Eliminar "${doc.path}"? Se borra para todo el equipo.`)) return;
-    await deleteDoc(doc.id, AUTHOR);
+    await deleteDoc(doc.id, state.author);
     setSelectedId(null);
   };
 
   const onCreate = async (path: string) => {
     setShowNew(false);
-    const res = await saveDoc({ path, content: `# ${path.split("/").pop()!.replace(/\.md$/, "")}\n\n` }, AUTHOR);
+    const res = await saveDoc({ path, content: `# ${path.split("/").pop()!.replace(/\.md$/, "")}\n\n` }, state.author);
     if ("ok" in res) setSelectedId(res.doc.id);
   };
 
@@ -441,7 +439,7 @@ const App: Component = () => {
       setShowNew(true);
     } else if (action === "delete") {
       if (!confirm(`¿Eliminar "${node.path}"? Se borra para todo el equipo.`)) return;
-      deleteDoc(node.docId!, AUTHOR);
+      deleteDoc(node.docId!, state.author);
       if (selectedId() === node.docId) setSelectedId(null);
     } else if (action === "delete-folder") {
       const count = docs().filter((d) => d.path.startsWith(node.path + "/")).length;
@@ -465,7 +463,7 @@ const App: Component = () => {
     if (!c || !doc) return;
     setConflict(null);
     setBaseVersion(c.server.version); // re-basar sobre lo del server
-    const res = await saveDoc({ id: doc.id, path: doc.path, content: c.local, base_version: c.server.version }, AUTHOR);
+    const res = await saveDoc({ id: doc.id, path: doc.path, content: c.local, base_version: c.server.version }, state.author);
     if ("ok" in res) {
       setBaseVersion(res.doc.version);
       setDirty(false);

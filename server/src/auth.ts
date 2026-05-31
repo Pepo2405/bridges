@@ -30,6 +30,9 @@ db.exec(`
 const hash = (t: string) => createHash("sha256").update(t).digest("hex");
 
 const qByHash = db.query<{ role: Role }, [string]>("SELECT role FROM tokens WHERE token_hash = ?");
+const qIdentByHash = db.query<{ name: string; role: Role }, [string]>(
+  "SELECT name, role FROM tokens WHERE token_hash = ?",
+);
 const qCount = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM tokens");
 const qList = db.query<{ name: string; role: Role; created_at: string }, []>(
   "SELECT name, role, created_at FROM tokens ORDER BY name",
@@ -58,6 +61,20 @@ export function roleForRequest(req: Request): Role | null {
   const header = req.headers.get("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7) : null;
   return roleForToken(bearer);
+}
+
+/** Identidad (nombre + rol) del token, o null si es inválido. */
+export function identityForToken(token: string | null): { name: string; role: Role } | null {
+  if (!token) return null;
+  if (BOOTSTRAP && token === BOOTSTRAP) return { name: "admin", role: "admin" };
+  return qIdentByHash.get(hash(token)) ?? null;
+}
+
+/** Identidad del token que viene en el header Authorization: Bearer. */
+export function identityForRequest(req: Request): { name: string; role: Role } | null {
+  const header = req.headers.get("authorization") ?? "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7) : null;
+  return identityForToken(bearer);
 }
 
 export function roleCan(role: Role, perm: Perm): boolean {

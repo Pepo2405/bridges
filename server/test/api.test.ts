@@ -52,10 +52,10 @@ describe("server con auth (admin bootstrap)", () => {
   });
   afterAll(() => cleanup());
 
-  test("whoami devuelve el rol del token", async () => {
+  test("whoami devuelve rol y nombre del token", async () => {
     const r = await fetch(`${base}/whoami`, { headers: bearer(ADMIN) });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ authEnabled: true, role: "admin" });
+    expect(await r.json()).toEqual({ authEnabled: true, role: "admin", name: "admin" });
   });
 
   test("whoami sin token → 401", async () => {
@@ -119,6 +119,10 @@ describe("server con auth (admin bootstrap)", () => {
     expect(created.token).toStartWith("fg_");
     const editor = created.token;
 
+    // whoami con el editor devuelve su nombre (identidad para el historial)
+    const who = await (await fetch(`${base}/whoami`, { headers: bearer(editor) })).json();
+    expect(who).toEqual({ authEnabled: true, role: "editor", name: "ed" });
+
     // nombre duplicado → 409
     const dup = await fetch(`${base}/tokens`, {
       method: "POST",
@@ -163,7 +167,7 @@ describe("server sin auth", () => {
   afterAll(() => cleanup());
 
   test("whoami informa authEnabled=false", async () => {
-    expect(await (await fetch(`${base}/whoami`)).json()).toEqual({ authEnabled: false, role: null });
+    expect(await (await fetch(`${base}/whoami`)).json()).toEqual({ authEnabled: false, role: null, name: null });
   });
 
   test("cualquiera puede crear en un vault vacío", async () => {

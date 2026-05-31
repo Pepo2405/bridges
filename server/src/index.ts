@@ -13,6 +13,7 @@ import {
   authEnabled,
   roleForToken,
   roleForRequest,
+  identityForRequest,
   roleCan,
   addToken,
   listTokens,
@@ -81,7 +82,8 @@ const server = Bun.serve({
     // Si la auth está apagada, role=null y el cliente asume permisos plenos.
     if (pathname === "/whoami" && req.method === "GET") {
       const enabled = authEnabled();
-      return json({ authEnabled: enabled, role: enabled ? roleForRequest(req) : null });
+      const ident = enabled ? identityForRequest(req) : null;
+      return json({ authEnabled: enabled, role: ident?.role ?? null, name: ident?.name ?? null });
     }
 
     // --- Gestión de tokens (API keys): solo admin ---

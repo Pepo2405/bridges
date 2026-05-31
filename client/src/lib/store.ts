@@ -19,7 +19,7 @@ import {
   type Connection,
 } from "./tauri";
 
-const AUTHOR = "yo"; // MVP: sin auth real
+const DEFAULT_AUTHOR = "yo"; // sin auth: no hay identidad de token
 
 type State = {
   vault: string | null;
@@ -36,6 +36,7 @@ type State = {
   perms: { write: boolean; delete: boolean }; // permisos del token actual (gatea la UI)
   role: string | null; // rol del token (viewer/editor/admin), null si no hay auth
   authEnabled: boolean; // si el server pide token
+  author: string; // identidad para el historial: nombre del token (o DEFAULT_AUTHOR sin auth)
 };
 
 /** Permisos según el rol del token. Sin auth, permisos plenos (el server igual valida). */
@@ -66,6 +67,7 @@ const [state, setState] = createStore<State>({
   perms: { write: true, delete: true },
   role: null,
   authEnabled: false,
+  author: DEFAULT_AUTHOR,
 });
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -156,9 +158,14 @@ export async function connect(opts: { vault: string; serverUrl?: string; token?:
   // (server viejo, red), asumimos permisos plenos; el server igual valida.
   try {
     const who = await api.whoami();
-    setState({ perms: permsForRole(who.role, who.authEnabled), role: who.role, authEnabled: who.authEnabled });
+    setState({
+      perms: permsForRole(who.role, who.authEnabled),
+      role: who.role,
+      authEnabled: who.authEnabled,
+      author: who.name || DEFAULT_AUTHOR,
+    });
   } catch {
-    setState({ perms: { write: true, delete: true }, role: null, authEnabled: false });
+    setState({ perms: { write: true, delete: true }, role: null, authEnabled: false, author: DEFAULT_AUTHOR });
   }
 
   setState("ready", true);
@@ -248,7 +255,7 @@ export function disconnect() {
   unwatch = null;
   for (const t of debounce.values()) clearTimeout(t);
   debounce.clear();
-  setState({ ready: false, vault: null, docs: {}, connected: false, perms: { write: true, delete: true }, role: null, authEnabled: false });
+  setState({ ready: false, vault: null, docs: {}, connected: false, perms: { write: true, delete: true }, role: null, authEnabled: false, author: DEFAULT_AUTHOR });
 }
 
 /** Elimina una conexión guardada. */
@@ -293,7 +300,7 @@ async function handleExternalChange(path: string) {
 
   if (doc) {
     if (doc.content === content) return; // eco de nuestra propia escritura o sin cambios
-    const res = await api.update(doc.id, { path, content, base_version: doc.version, author: AUTHOR });
+    const res = await api.update(doc.id, { path, content, base_version: doc.version, author: state.author });
     if ("conflict" in res) {
       await applyDocs(vault, [res.server]); // gana el server: reescribe el disco
       bumpSeq(res.server.seq);
@@ -307,7 +314,7 @@ async function handleExternalChange(path: string) {
     // doc cuyo archivo ya no está en disco). Si sí, movemos ese doc en vez de duplicar.
     const moved = await findMovedDoc(vault, content, path);
     if (moved) {
-      const res = await api.update(moved.id, { path, content, base_version: moved.version, author: AUTHOR });
+      const res = await api.update(moved.id, { path, content, base_version: moved.version, author: state.author });
       if ("conflict" in res) {
         await applyDocs(vault, [res.server]);
         bumpSeq(res.server.seq);
@@ -320,7 +327,7 @@ async function handleExternalChange(path: string) {
     }
 
     // Archivo nuevo de verdad -> crear en el server.
-    const res = await api.create({ path, content, author: AUTHOR });
+    const res = await api.create({ path, content, author: state.author });
     if ("conflict" in res) {
       await applyDocs(vault, [res.server]);
       bumpSeq(res.server.seq);
@@ -408,7 +415,7 @@ export async function moveDoc(id: string, newPath: string): Promise<SaveOutcome 
   const doc = state.docs[id];
   if (!doc) return null;
   if (doc.path === newPath) return { ok: true, doc };
-  const res = await saveDoc({ id, path: newPath, content: doc.content, base_version: doc.version }, AUTHOR);
+  const res = await saveDoc({ id, path: newPath, content: doc.content, base_version: doc.version }, state.author);
   if ("conflict" in res) setNotice(`No se pudo mover "${doc.path}": ${res.server.path} cambió en el server.`);
   return res;
 }
@@ -426,7 +433,7 @@ export async function renameFolder(oldPrefix: string, newPrefix: string) {
 export async function deleteFolder(prefix: string) {
   const p = prefix.replace(/\/+$/, "");
   const affected = Object.values(state.docs).filter((d) => d.path.startsWith(p + "/"));
-  for (const d of affected) await deleteDoc(d.id, AUTHOR);
+  for (const d of affected) await deleteDoc(d.id, state.author);
 }
 
 export function docList(): Doc[] {

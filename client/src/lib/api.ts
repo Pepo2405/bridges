@@ -52,7 +52,7 @@ export class ForgeApi {
     return r.json();
   }
 
-  async whoami(): Promise<{ authEnabled: boolean; role: string | null }> {
+  async whoami(): Promise<{ authEnabled: boolean; role: string | null; name: string | null }> {
     const r = await fetch(this.url("/whoami"), { headers: this.headers() });
     if (!r.ok) throw new ApiError(r.status, `whoami ${r.status}`);
     return r.json();
