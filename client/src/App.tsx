@@ -420,12 +420,18 @@ const App: Component = () => {
     return id ? s()?.docs[id] ?? null : null;
   });
 
-  // Cargar el doc en el editor. Reacciona a `current()`, que cambia tanto al
-  // elegir otro doc como cuando el store reemplaza el doc actual por una edición
-  // externa (SSE/pull/watcher). Distinguimos ambos casos para no pisar el borrador.
+  // Cargar el doc en el editor. Reacciona a `current()` (cambio de selección) y
+  // también a su `content`/`version`: los leemos en el scope reactivo para que el
+  // efecto se dispare cuando una edición externa (SSE/pull/watcher) muta el doc
+  // abierto en su lugar, no solo al elegir otra nota. Distinguimos ambos casos
+  // para no pisar el borrador.
   let loadedId: string | null = null;
   createEffect(() => {
     const doc = current();
+    // Tracked: suscribe el efecto a los cambios de contenido/versión del doc
+    // abierto (si está montado el mismo id), aunque la referencia no cambie.
+    const content = doc?.content;
+    const version = doc?.version;
     untrack(() => {
       if (!doc) {
         loadedId = null;
@@ -434,20 +440,20 @@ const App: Component = () => {
       if (doc.id !== loadedId) {
         // Cambió la selección -> cargar fresco.
         loadedId = doc.id;
-        setDraft(doc.content);
-        setBaseVersion(doc.version);
+        setDraft(content!);
+        setBaseVersion(version!);
         setDirty(false);
         return;
       }
       // Mismo doc: llegó una versión nueva desde afuera.
-      if (doc.version === baseVersion()) return; // nada que reflejar
+      if (version === baseVersion()) return; // nada que reflejar
       if (dirty()) {
         // Hay borrador sin guardar: no lo pisamos, ofrecemos resolver.
         setConflict({ local: draft(), server: doc });
       } else {
         // Sin cambios locales: reflejar la edición externa.
-        setDraft(doc.content);
-        setBaseVersion(doc.version);
+        setDraft(content!);
+        setBaseVersion(version!);
       }
     });
   });
