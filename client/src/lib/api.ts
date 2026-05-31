@@ -51,6 +51,12 @@ export class ForgeApi {
     return r.json();
   }
 
+  async whoami(): Promise<{ authEnabled: boolean; role: string | null }> {
+    const r = await fetch(this.url("/whoami"), { headers: this.headers() });
+    if (!r.ok) throw new ApiError(r.status, `whoami ${r.status}`);
+    return r.json();
+  }
+
   async sync(since: number): Promise<SyncResponse> {
     // Timeout para que un pull no quede colgado indefinidamente (p.ej. pool de conexiones saturado).
     const ctrl = new AbortController();

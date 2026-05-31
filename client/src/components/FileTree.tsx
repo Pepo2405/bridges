@@ -21,11 +21,13 @@ import {
 } from "~/components/ui/dropdown-menu";
 
 export type TreeAction = "rename" | "delete" | "new-in-folder" | "rename-folder" | "delete-folder";
+export type Perms = { write: boolean; delete: boolean };
 
 const ItemMenu: Component<{
   node: TreeNode;
   open: boolean;
   setOpen: (v: boolean) => void;
+  perms: Perms;
   onAction: (action: TreeAction, node: TreeNode) => void;
 }> = (props) => {
   const act = (a: TreeAction) => props.onAction(a, props.node);
@@ -43,24 +45,24 @@ const ItemMenu: Component<{
           when={props.node.isDir}
           fallback={
             <>
-              <DropdownMenuItem onSelect={() => act("rename")}>
+              <DropdownMenuItem disabled={!props.perms.write} onSelect={() => act("rename")}>
                 <Pencil class="h-4 w-4" /> Renombrar / mover
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem destructive onSelect={() => act("delete")}>
+              <DropdownMenuItem destructive disabled={!props.perms.delete} onSelect={() => act("delete")}>
                 <Trash2 class="h-4 w-4" /> Eliminar
               </DropdownMenuItem>
             </>
           }
         >
-          <DropdownMenuItem onSelect={() => act("new-in-folder")}>
+          <DropdownMenuItem disabled={!props.perms.write} onSelect={() => act("new-in-folder")}>
             <FilePlus class="h-4 w-4" /> Nueva nota aquí
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => act("rename-folder")}>
+          <DropdownMenuItem disabled={!props.perms.write} onSelect={() => act("rename-folder")}>
             <Pencil class="h-4 w-4" /> Renombrar carpeta
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem destructive onSelect={() => act("delete-folder")}>
+          <DropdownMenuItem destructive disabled={!props.perms.delete} onSelect={() => act("delete-folder")}>
             <Trash2 class="h-4 w-4" /> Eliminar carpeta
           </DropdownMenuItem>
         </Show>
@@ -73,6 +75,7 @@ const TreeItem: Component<{
   node: TreeNode;
   depth: number;
   selectedId: string | null;
+  perms: Perms;
   onSelect: (docId: string) => void;
   onAction: (action: TreeAction, node: TreeNode) => void;
 }> = (props) => {
@@ -100,7 +103,7 @@ const TreeItem: Component<{
             <FileText class="h-4 w-4 shrink-0 text-muted-foreground" />
             <span class="truncate">{props.node.name.replace(/\.md$/i, "")}</span>
           </button>
-          <ItemMenu node={props.node} open={menuOpen()} setOpen={setMenuOpen} onAction={props.onAction} />
+          <ItemMenu node={props.node} open={menuOpen()} setOpen={setMenuOpen} perms={props.perms} onAction={props.onAction} />
         </div>
       }
     >
@@ -124,7 +127,7 @@ const TreeItem: Component<{
           )}
           <span class="truncate">{props.node.name}</span>
         </button>
-        <ItemMenu node={props.node} open={menuOpen()} setOpen={setMenuOpen} onAction={props.onAction} />
+        <ItemMenu node={props.node} open={menuOpen()} setOpen={setMenuOpen} perms={props.perms} onAction={props.onAction} />
       </div>
       <Show when={expanded()}>
         <For each={props.node.children}>
@@ -133,6 +136,7 @@ const TreeItem: Component<{
               node={child}
               depth={props.depth + 1}
               selectedId={props.selectedId}
+              perms={props.perms}
               onSelect={props.onSelect}
               onAction={props.onAction}
             />
@@ -146,6 +150,7 @@ const TreeItem: Component<{
 export const FileTree: Component<{
   nodes: TreeNode[];
   selectedId: string | null;
+  perms: Perms;
   onSelect: (docId: string) => void;
   onAction: (action: TreeAction, node: TreeNode) => void;
 }> = (props) => {
@@ -153,7 +158,7 @@ export const FileTree: Component<{
     <div class="flex flex-col gap-0.5">
       <For each={props.nodes}>
         {(node) => (
-          <TreeItem node={node} depth={0} selectedId={props.selectedId} onSelect={props.onSelect} onAction={props.onAction} />
+          <TreeItem node={node} depth={0} selectedId={props.selectedId} perms={props.perms} onSelect={props.onSelect} onAction={props.onAction} />
         )}
       </For>
     </div>

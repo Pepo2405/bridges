@@ -53,6 +53,13 @@ export function roleForToken(token: string | null): Role | null {
   return qByHash.get(hash(token))?.role ?? null;
 }
 
+/** Rol del token que viene en el header Authorization: Bearer de un request. */
+export function roleForRequest(req: Request): Role | null {
+  const header = req.headers.get("authorization") ?? "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7) : null;
+  return roleForToken(bearer);
+}
+
 export function roleCan(role: Role, perm: Perm): boolean {
   return ROLE_PERMS[role].includes(perm);
 }

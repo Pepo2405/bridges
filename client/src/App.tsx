@@ -1,4 +1,4 @@
-import { type Component, Show, For, createSignal, createMemo, createEffect, onMount, untrack } from "solid-js";
+import { type Component, type ParentProps, Show, For, createSignal, createMemo, createEffect, onMount, untrack } from "solid-js";
 import {
   Search,
   Plus,
@@ -60,6 +60,25 @@ const AUTHOR = "yo"; // MVP: sin auth real
 function vaultName(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
 }
+
+// Mensajes de permiso insuficiente (tooltip de los controles bloqueados).
+const NO_WRITE = "Tu token no tiene permiso de escritura en este vault.";
+const NO_DELETE = "Tu token no tiene permiso para borrar en este vault.";
+
+/**
+ * Envuelve un control: si `when` es falso, lo muestra deshabilitado con un
+ * tooltip explicando por qué. Un botón con `disabled` corta los eventos de
+ * hover, así que el tooltip va en un <span> contenedor que sí los recibe.
+ */
+const Gated: Component<ParentProps<{ when: boolean; reason: string }>> = (props) => (
+  <Show when={props.when} fallback={
+    <span class="inline-flex cursor-not-allowed" title={props.reason}>
+      <span class="pointer-events-none opacity-50">{props.children}</span>
+    </span>
+  }>
+    {props.children}
+  </Show>
+);
 
 const BootSplash: Component = () => (
   <div class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
@@ -543,16 +562,18 @@ const App: Component = () => {
             <Button size="sm" variant="ghost" onClick={() => pull()} title="Sincronizar ahora">
               <RefreshCw class="h-4 w-4" />
             </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                setNewPrefill("");
-                setShowNew(true);
-              }}
-            >
-              <Plus class="h-4 w-4" />
-              Nuevo
-            </Button>
+            <Gated when={state.perms.write} reason={NO_WRITE}>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setNewPrefill("");
+                  setShowNew(true);
+                }}
+              >
+                <Plus class="h-4 w-4" />
+                Nuevo
+              </Button>
+            </Gated>
           </div>
         </header>
 
@@ -589,20 +610,25 @@ const App: Component = () => {
                   fallback={
                     <div class="flex flex-col items-center gap-3 px-2 py-8 text-center">
                       <p class="text-sm text-muted-foreground">Vault vacío.</p>
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setNewPrefill("");
-                          setShowNew(true);
-                        }}
+                      <Show
+                        when={state.perms.write}
+                        fallback={<p class="text-xs text-muted-foreground">Tu token es de solo lectura.</p>}
                       >
-                        <Plus class="h-4 w-4" />
-                        Crear primer documento
-                      </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setNewPrefill("");
+                            setShowNew(true);
+                          }}
+                        >
+                          <Plus class="h-4 w-4" />
+                          Crear primer documento
+                        </Button>
+                      </Show>
                     </div>
                   }
                 >
-                  <FileTree nodes={tree()} selectedId={selectedId()} onSelect={select} onAction={onTreeAction} />
+                  <FileTree nodes={tree()} selectedId={selectedId()} perms={state.perms} onSelect={select} onAction={onTreeAction} />
                 </Show>
               </Show>
             </div>
@@ -654,13 +680,17 @@ const App: Component = () => {
                       >
                         {showPreview() ? <Pencil class="h-4 w-4" /> : <Eye class="h-4 w-4" />}
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={onDelete} title="Eliminar">
-                        <Trash2 class="h-4 w-4 text-destructive" />
-                      </Button>
-                      <Button size="sm" onClick={onSave} disabled={saving() || !dirty()}>
-                        <Save class="h-4 w-4" />
-                        Guardar
-                      </Button>
+                      <Gated when={state.perms.delete} reason={NO_DELETE}>
+                        <Button size="sm" variant="ghost" onClick={onDelete} title="Eliminar">
+                          <Trash2 class="h-4 w-4 text-destructive" />
+                        </Button>
+                      </Gated>
+                      <Gated when={state.perms.write} reason={NO_WRITE}>
+                        <Button size="sm" onClick={onSave} disabled={saving() || !dirty()}>
+                          <Save class="h-4 w-4" />
+                          Guardar
+                        </Button>
+                      </Gated>
                     </div>
                   </div>
 
@@ -672,6 +702,7 @@ const App: Component = () => {
                       )}
                       value={draft()}
                       spellcheck={false}
+                      readOnly={!state.perms.write}
                       onInput={(e) => {
                         setDraft(e.currentTarget.value);
                         setDirty(true);

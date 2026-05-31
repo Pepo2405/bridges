@@ -33,7 +33,21 @@ type State = {
   connections: Connection[]; // conexiones guardadas (carpeta + servidor)
   error: string | null;
   notice: string | null; // aviso transitorio (p.ej. conflicto en sync de fondo)
+  perms: { write: boolean; delete: boolean }; // permisos del token actual (gatea la UI)
 };
+
+/** Permisos según el rol del token. Sin auth, permisos plenos (el server igual valida). */
+function permsForRole(role: string | null, authEnabled: boolean): { write: boolean; delete: boolean } {
+  if (!authEnabled) return { write: true, delete: true };
+  switch (role) {
+    case "admin":
+      return { write: true, delete: true };
+    case "editor":
+      return { write: true, delete: false };
+    default: // viewer o rol desconocido
+      return { write: false, delete: false };
+  }
+}
 
 const [state, setState] = createStore<State>({
   vault: null,
@@ -47,6 +61,7 @@ const [state, setState] = createStore<State>({
   connections: [],
   error: null,
   notice: null,
+  perms: { write: true, delete: true },
 });
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -129,6 +144,16 @@ export async function connect(opts: { vault: string; serverUrl?: string; token?:
   // throwOnError: si el token es inválido/sin permiso, el connect falla y se
   // muestra el error en el gestor de conexiones (en vez de quedar "listo" vacío).
   await pull({ throwOnError: true });
+
+  // Permisos del token: gatean qué botones se habilitan. Si /whoami falla
+  // (server viejo, red), asumimos permisos plenos; el server igual valida.
+  try {
+    const who = await api.whoami();
+    setState("perms", permsForRole(who.role, who.authEnabled));
+  } catch {
+    setState("perms", { write: true, delete: true });
+  }
+
   setState("ready", true);
 
   // Sync en vivo: en Tauri el stream SSE lo maneja Rust (el WKWebView no entrega
@@ -216,7 +241,7 @@ export function disconnect() {
   unwatch = null;
   for (const t of debounce.values()) clearTimeout(t);
   debounce.clear();
-  setState({ ready: false, vault: null, docs: {}, connected: false });
+  setState({ ready: false, vault: null, docs: {}, connected: false, perms: { write: true, delete: true } });
 }
 
 /** Elimina una conexión guardada. */

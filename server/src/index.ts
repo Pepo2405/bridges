@@ -9,7 +9,7 @@ import {
 } from "./db";
 import { addClient, broadcastChange, clientCount } from "./events";
 import { searchDocs } from "./search";
-import { authEnabled, roleForToken, roleCan, type Perm } from "./auth";
+import { authEnabled, roleForToken, roleForRequest, roleCan, type Perm } from "./auth";
 
 const PORT = Number(process.env.PORT ?? 4321);
 
@@ -65,6 +65,13 @@ const server = Bun.serve({
 
     const denied = checkAuth(req, url);
     if (denied) return denied;
+
+    // --- Identidad: GET /whoami → permisos del token actual ---
+    // Si la auth está apagada, role=null y el cliente asume permisos plenos.
+    if (pathname === "/whoami" && req.method === "GET") {
+      const enabled = authEnabled();
+      return json({ authEnabled: enabled, role: enabled ? roleForRequest(req) : null });
+    }
 
     // --- Pull incremental: GET /sync?since=<seq> ---
     if (pathname === "/sync" && req.method === "GET") {

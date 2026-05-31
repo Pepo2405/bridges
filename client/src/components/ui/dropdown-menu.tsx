@@ -23,7 +23,7 @@ export const DropdownMenuContent: Component<ParentProps<{ class?: string }>> = (
   );
 };
 
-type ItemProps = ParentProps<{ class?: string; onSelect?: () => void; destructive?: boolean }>;
+type ItemProps = ParentProps<{ class?: string; onSelect?: () => void; destructive?: boolean; disabled?: boolean }>;
 
 export const DropdownMenuItem: Component<ItemProps> = (props) => {
   const [local, rest] = splitProps(props, ["class", "children", "destructive"]);
@@ -31,6 +31,7 @@ export const DropdownMenuItem: Component<ItemProps> = (props) => {
     <Kbd.Item
       class={cn(
         "flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground",
+        "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         local.destructive && "text-destructive focus:bg-destructive/10 focus:text-destructive",
         local.class,
       )}
