@@ -106,6 +106,13 @@ export class ForgeApi {
     return (await r.json()).history;
   }
 
+  /** Contenido del doc tal como quedó en un cambio (seq). */
+  async version(id: string, seq: number): Promise<string> {
+    const r = await fetch(this.url(`/documents/${encodeURIComponent(id)}/versions/${seq}`), { headers: this.headers() });
+    if (!r.ok) throw new ApiError(r.status, `version ${r.status}`);
+    return (await r.json()).content;
+  }
+
   async search(q: string): Promise<SearchHit[]> {
     const r = await fetch(this.url(`/search?q=${encodeURIComponent(q)}`), { headers: this.headers() });
     if (!r.ok) throw new ApiError(r.status, `search ${r.status}`);

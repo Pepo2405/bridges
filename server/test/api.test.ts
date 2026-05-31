@@ -128,6 +128,33 @@ describe("server con auth (admin bootstrap)", () => {
     expect(history[0].author).toBe("t");
   });
 
+  test("versions devuelve el snapshot de contenido de cada cambio", async () => {
+    const created = await (
+      await fetch(`${base}/documents`, {
+        method: "POST",
+        headers: jsonHeaders(ADMIN),
+        body: JSON.stringify({ path: "ver.md", content: "uno", author: "t" }),
+      })
+    ).json();
+    await fetch(`${base}/documents/${created.id}`, {
+      method: "POST",
+      headers: jsonHeaders(ADMIN),
+      body: JSON.stringify({ path: "ver.md", content: "dos", base_version: 1, author: "t" }),
+    });
+    const { history } = await (
+      await fetch(`${base}/documents/${created.id}/history`, { headers: bearer(ADMIN) })
+    ).json();
+    const seqOf = (a: string) => history.find((h: any) => h.action === a).seq;
+    const v1 = await (
+      await fetch(`${base}/documents/${created.id}/versions/${seqOf("create")}`, { headers: bearer(ADMIN) })
+    ).json();
+    const v2 = await (
+      await fetch(`${base}/documents/${created.id}/versions/${seqOf("update")}`, { headers: bearer(ADMIN) })
+    ).json();
+    expect(v1.content).toBe("uno");
+    expect(v2.content).toBe("dos");
+  });
+
   test("admin gestiona tokens; editor queda bloqueado donde corresponde", async () => {
     // crear token editor
     const created = await (

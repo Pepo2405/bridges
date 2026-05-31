@@ -5,6 +5,7 @@ import {
   syncSince,
   getLastSeq,
   getHistory,
+  getVersion,
   ConflictError,
   NotFoundError,
 } from "./db";
@@ -197,6 +198,14 @@ const server = Bun.serve({
     const histMatch = pathname.match(/^\/documents\/([^/]+)\/history$/);
     if (histMatch && req.method === "GET") {
       return json({ history: getHistory(decodeURIComponent(histMatch[1])) });
+    }
+
+    // --- Contenido de una versión: GET /documents/:id/versions/:seq ---
+    const verMatch = pathname.match(/^\/documents\/([^/]+)\/versions\/(\d+)$/);
+    if (verMatch && req.method === "GET") {
+      const content = getVersion(decodeURIComponent(verMatch[1]), Number(verMatch[2]));
+      if (content == null) return json({ error: "versión sin snapshot" }, 404);
+      return json({ seq: Number(verMatch[2]), content });
     }
 
     // --- Update / Delete sobre /documents/:id ---

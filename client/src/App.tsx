@@ -974,6 +974,13 @@ const App: Component = () => {
       <HistoryDialog
         docId={historyDocId()}
         path={historyDocId() ? state.docs[historyDocId()!]?.path : undefined}
+        currentContent={draft()}
+        onRestore={(content) => {
+          setDraft(content);
+          setDirty(true);
+          setMode("edit");
+          setHistoryDocId(null);
+        }}
         onClose={() => setHistoryDocId(null)}
       />
       <ConfirmHost />

@@ -43,6 +43,14 @@ db.exec(`
   INSERT OR IGNORE INTO meta (id, last_seq) VALUES (1, 0);
 `);
 
+// Migración: snapshot del contenido por cambio (para diff/restaurar). En DBs
+// viejas la columna no existe; ADD COLUMN es barato. Ignoramos si ya está.
+try {
+  db.exec("ALTER TABLE changes ADD COLUMN content TEXT");
+} catch {
+  /* la columna ya existe */
+}
+
 export type Doc = {
   id: string;
   path: string;
@@ -80,7 +88,11 @@ const qSoftDelete = db.query(
   `UPDATE documents SET deleted=1, version=version+1, seq=$seq, updated_by=$author, updated_at=$now WHERE id=$id`,
 );
 const qChange = db.query(
-  `INSERT INTO changes (doc_id, seq, author, action, created_at) VALUES ($doc, $seq, $author, $action, $now)`,
+  `INSERT INTO changes (doc_id, seq, author, action, created_at, content)
+   VALUES ($doc, $seq, $author, $action, $now, $content)`,
+);
+const qVersion = db.query<{ content: string | null }, [string, number]>(
+  "SELECT content FROM changes WHERE doc_id = ? AND seq = ?",
 );
 
 export function getDoc(id: string): Doc | null {
@@ -100,6 +112,11 @@ export function getHistory(id: string): Change[] {
   return qHistory.all(id);
 }
 
+/** Contenido del doc tal como quedó en un cambio (seq). null si no se guardó snapshot. */
+export function getVersion(id: string, seq: number): string | null {
+  return qVersion.get(id, seq)?.content ?? null;
+}
+
 export function syncSince(since: number): { documents: Doc[]; last_seq: number } {
   const documents = qSince.all(since);
   return { documents, last_seq: getLastSeq() };
@@ -114,7 +131,7 @@ export const createDoc = db.transaction(
     const now = new Date().toISOString();
     const title = input.title ?? deriveTitle(input.content, input.path);
     qInsert.run({ $id: id, $path: input.path, $title: title, $content: input.content, $seq: seq, $author: input.author ?? null, $now: now });
-    qChange.run({ $doc: id, $seq: seq, $author: input.author ?? null, $action: "create", $now: now });
+    qChange.run({ $doc: id, $seq: seq, $author: input.author ?? null, $action: "create", $now: now, $content: input.content });
     writeDoc(input.path, input.content);
     return getDoc(id)!;
   },
@@ -144,7 +161,7 @@ export const updateDoc = db.transaction(
     const now = new Date().toISOString();
     const title = input.title ?? deriveTitle(input.content, input.path);
     qUpdate.run({ $id: input.id, $path: input.path, $title: title, $content: input.content, $seq: seq, $author: input.author ?? null, $now: now });
-    qChange.run({ $doc: input.id, $seq: seq, $author: input.author ?? null, $action: "update", $now: now });
+    qChange.run({ $doc: input.id, $seq: seq, $author: input.author ?? null, $action: "update", $now: now, $content: input.content });
     if (input.path !== current.path) removeDoc(current.path);
     writeDoc(input.path, input.content);
     return getDoc(input.id)!;
@@ -159,7 +176,7 @@ export const deleteDoc = db.transaction((id: string, author?: string | null) => 
   const seq = qNextSeq.get()!.last_seq;
   const now = new Date().toISOString();
   qSoftDelete.run({ $id: id, $seq: seq, $author: author ?? null, $now: now });
-  qChange.run({ $doc: id, $seq: seq, $author: author ?? null, $action: "delete", $now: now });
+  qChange.run({ $doc: id, $seq: seq, $author: author ?? null, $action: "delete", $now: now, $content: null });
   removeDoc(current.path);
   return getDoc(id)!;
 });
