@@ -73,6 +73,24 @@ const theme = EditorView.theme({
   ".cm-selectionBackground": { backgroundColor: "hsl(var(--primary) / 0.18)" },
   "&.cm-focused .cm-selectionBackground, .cm-content ::selection": { backgroundColor: "hsl(var(--primary) / 0.24)" },
   ".cm-wikilink": { color: "hsl(217 91% 66%)" },
+  // Dropdown de autocompletado atado a los tokens (CM trae tema claro por defecto).
+  ".cm-tooltip": {
+    backgroundColor: "hsl(var(--popover))",
+    color: "hsl(var(--popover-foreground))",
+    border: "1px solid hsl(var(--border))",
+    borderRadius: "0.5rem",
+    overflow: "hidden",
+    boxShadow: "0 8px 24px rgb(0 0 0 / 0.35)",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": { fontFamily: "inherit", maxHeight: "16rem" },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li": { padding: "0.25rem 0.6rem", color: "hsl(var(--popover-foreground))" },
+  ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    backgroundColor: "hsl(var(--accent))",
+    color: "hsl(var(--accent-foreground))",
+  },
+  ".cm-completionIcon": { display: "none" },
+  ".cm-completionDetail": { color: "hsl(var(--muted-foreground))", fontStyle: "normal", marginLeft: "0.5rem" },
+  ".cm-completionMatchedText": { textDecoration: "none", fontWeight: "700", color: "hsl(var(--primary))" },
 });
 
 /** Editor de markdown (CodeMirror 6). Controlado: `value` entra, `onChange` sale. */
