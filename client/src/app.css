@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 348 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 5.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 348 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 50.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Render de markdown en el preview */
+.prose-forge {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: hsl(var(--foreground));
+}
+.prose-forge h1 { font-size: 1.5rem; font-weight: 600; margin: 0.6em 0 0.4em; }
+.prose-forge h2 { font-size: 1.25rem; font-weight: 600; margin: 0.8em 0 0.4em; border-bottom: 1px solid hsl(var(--border)); padding-bottom: 0.2em; }
+.prose-forge h3 { font-size: 1.05rem; font-weight: 600; margin: 0.8em 0 0.3em; }
+.prose-forge p { margin: 0.5em 0; }
+.prose-forge ul, .prose-forge ol { margin: 0.5em 0; padding-left: 1.4em; }
+.prose-forge li { margin: 0.2em 0; }
+.prose-forge a { color: hsl(217 91% 60%); text-decoration: none; }
+.prose-forge a:hover { text-decoration: underline; }
+.prose-forge .wikilink { color: hsl(217 91% 66%); cursor: pointer; text-decoration: none; }
+.prose-forge .wikilink:hover { text-decoration: underline; }
+.prose-forge .wikilink-missing { color: hsl(var(--muted-foreground)); cursor: default; border-bottom: 1px dashed hsl(var(--muted-foreground) / 0.5); }
+.prose-forge .wikilink-missing:hover { text-decoration: none; }
+.prose-forge code { background: hsl(var(--muted)); padding: 0.12em 0.35em; border-radius: 4px; font-size: 0.85em; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.prose-forge pre { background: hsl(var(--muted)); padding: 0.9em 1em; border-radius: var(--radius); overflow-x: auto; margin: 0.7em 0; }
+.prose-forge pre code { background: none; padding: 0; }
+.prose-forge blockquote { border-left: 3px solid hsl(var(--border)); padding-left: 1em; color: hsl(var(--muted-foreground)); margin: 0.6em 0; }
+.prose-forge table { border-collapse: collapse; margin: 0.7em 0; }
+.prose-forge th, .prose-forge td { border: 1px solid hsl(var(--border)); padding: 0.4em 0.7em; }
+.prose-forge hr { border: none; border-top: 1px solid hsl(var(--border)); margin: 1em 0; }

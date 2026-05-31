@@ -1,0 +1,26 @@
+# Deploy del server Forge. En Coolify: "Docker Compose" apuntando a este archivo.
+# El healthcheck pega a /health (público). Los tokens se crean con el CLI dentro
+# del contenedor: docker compose exec forge bun run src/tokens.ts add <nombre> <rol>
+services:
+  forge:
+    build: .
+    ports:
+      - "4321:4321"
+    environment:
+      FORGE_DB: /data/forge.db
+      FORGE_VAULT: /data/vault
+      PORT: "4321"
+      # Admin de arranque opcional (escape hatch para el primer login).
+      # Mejor dejarlo vacío y crear tokens con el CLI una vez levantado.
+      # FORGE_TOKEN: ${FORGE_TOKEN}
+    volumes:
+      - forge-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:4321/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  forge-data:
