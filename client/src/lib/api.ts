@@ -17,6 +17,17 @@ export type Change = { seq: number; author: string | null; action: string; creat
 export type SyncResponse = { documents: Doc[]; last_seq: number };
 export type SearchHit = { id: string; path: string; title: string | null; snippet: string };
 export type TokenInfo = { name: string; role: string; created_at: string };
+export type VaultInfo = { slug: string; name: string; last_seq: number; created_at: string };
+
+export type WhoAmI = {
+  authEnabled: boolean;
+  role: string | null;
+  name: string | null;
+  // Opcionales: un server viejo (pre-multivault) no los manda.
+  vault?: string;
+  vaultName?: string;
+  isOwner?: boolean;
+};
 
 export type ConflictResult = { conflict: true; server: Doc };
 export type SaveResult = { ok: true; doc: Doc } | ConflictResult;
@@ -50,15 +61,33 @@ export class ForgeApi {
     return this.token ? { ...extra, authorization: `Bearer ${this.token}` } : extra;
   }
 
-  async health(): Promise<{ ok: boolean; last_seq: number }> {
+  async health(): Promise<{ ok: boolean }> {
     const r = await fetch(this.url("/health"));
     if (!r.ok) throw new ApiError(r.status, `health ${r.status}`);
     return r.json();
   }
 
-  async whoami(): Promise<{ authEnabled: boolean; role: string | null; name: string | null }> {
+  async whoami(): Promise<WhoAmI> {
     const r = await fetch(this.url("/whoami"), { headers: this.headers() });
     if (!r.ok) throw new ApiError(r.status, `whoami ${r.status}`);
+    return r.json();
+  }
+
+  /** Lista los vaults del server (solo el owner). */
+  async listVaults(): Promise<VaultInfo[]> {
+    const r = await fetch(this.url("/vaults"), { headers: this.headers() });
+    if (!r.ok) throw new ApiError(r.status, `vaults ${r.status}`);
+    return (await r.json()).vaults;
+  }
+
+  /** Crea un vault y devuelve su token admin (solo se ve una vez). */
+  async createVault(slug: string, name: string): Promise<{ vault: VaultInfo; token: string }> {
+    const r = await fetch(this.url("/vaults"), {
+      method: "POST",
+      headers: this.headers({ "content-type": "application/json" }),
+      body: JSON.stringify({ slug, name }),
+    });
+    if (!r.ok) throw new ApiError(r.status, `create vault ${r.status}: ${await r.text()}`);
     return r.json();
   }
 

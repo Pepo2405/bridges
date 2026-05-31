@@ -9,20 +9,20 @@ export type SearchHit = {
 
 const qSearch = db.query<
   { id: string; path: string; title: string | null; content: string },
-  [string, string, string]
+  [string, string, string, string]
 >(
   `SELECT id, path, title, content FROM documents
-   WHERE deleted = 0 AND (title LIKE ?1 OR path LIKE ?2 OR content LIKE ?3)
+   WHERE vault = ?4 AND deleted = 0 AND (title LIKE ?1 OR path LIKE ?2 OR content LIKE ?3)
    ORDER BY (title LIKE ?1) DESC, path ASC
    LIMIT 50`,
 );
 
-/** Búsqueda full-text básica (LIKE case-insensitive) sobre el índice. */
-export function searchDocs(query: string): SearchHit[] {
+/** Búsqueda full-text básica (LIKE case-insensitive) sobre el índice de un vault. */
+export function searchDocs(vault: string, query: string): SearchHit[] {
   const q = query.trim();
   if (!q) return [];
   const like = `%${q.replace(/[%_]/g, (m) => "\\" + m)}%`;
-  const rows = qSearch.all(like, like, like);
+  const rows = qSearch.all(like, like, like, vault);
   return rows.map((r) => ({
     id: r.id,
     path: r.path,

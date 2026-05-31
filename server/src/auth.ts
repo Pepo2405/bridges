@@ -1,14 +1,17 @@
 /**
- * Auth multi-token con permisos por rol. Los tokens viven en SQLite (se guarda
- * el hash, no el token en claro) y se consultan por request — agregar/revocar
- * funciona en vivo sin reiniciar. `FORGE_TOKEN` (env) es un admin de arranque
- * opcional: escape hatch para el primer deploy cuando la tabla está vacía.
+ * Auth multi-token con permisos por rol, scopeada por vault. Cada token
+ * pertenece a UN vault; el server deduce el vault del token. Los tokens viven
+ * en SQLite (se guarda el hash, no el token en claro). `FORGE_TOKEN` (env) es el
+ * "server owner": admin del vault `default` y con poderes cross-vault.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { db } from "./db";
 
 export type Role = "viewer" | "editor" | "admin";
 export type Perm = "read" | "write" | "delete";
+
+/** Identidad resuelta de un token. El owner (FORGE_TOKEN) tiene isOwner=true. */
+export type Identity = { name: string; role: Role; vault: string; isOwner: boolean };
 
 export const ROLES: Role[] = ["viewer", "editor", "admin"];
 
@@ -18,29 +21,21 @@ const ROLE_PERMS: Record<Role, Perm[]> = {
   admin: ["read", "write", "delete"],
 };
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS tokens (
-    name        TEXT PRIMARY KEY,
-    token_hash  TEXT NOT NULL UNIQUE,
-    role        TEXT NOT NULL,
-    created_at  TEXT NOT NULL
-  );
-`);
+// La tabla `tokens` la crea db.ts (esquema multi-vault) / la migración.
 
 const hash = (t: string) => createHash("sha256").update(t).digest("hex");
 
-const qByHash = db.query<{ role: Role }, [string]>("SELECT role FROM tokens WHERE token_hash = ?");
-const qIdentByHash = db.query<{ name: string; role: Role }, [string]>(
-  "SELECT name, role FROM tokens WHERE token_hash = ?",
+const qIdentByHash = db.query<{ name: string; role: Role; vault: string }, [string]>(
+  "SELECT name, role, vault FROM tokens WHERE token_hash = ?",
 );
 const qCount = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM tokens");
-const qList = db.query<{ name: string; role: Role; created_at: string }, []>(
-  "SELECT name, role, created_at FROM tokens ORDER BY name",
+const qList = db.query<{ name: string; role: Role; created_at: string }, [string]>(
+  "SELECT name, role, created_at FROM tokens WHERE vault = ? ORDER BY name",
 );
 const qInsert = db.query(
-  "INSERT INTO tokens (name, token_hash, role, created_at) VALUES ($name, $hash, $role, $now)",
+  "INSERT INTO tokens (vault, name, token_hash, role, created_at) VALUES ($vault, $name, $hash, $role, $now)",
 );
-const qDelete = db.query("DELETE FROM tokens WHERE name = ?");
+const qDelete = db.query("DELETE FROM tokens WHERE vault = ? AND name = ?");
 
 const BOOTSTRAP = process.env.FORGE_TOKEN ?? null;
 
@@ -49,29 +44,16 @@ export function authEnabled(): boolean {
   return BOOTSTRAP != null || qCount.get()!.n > 0;
 }
 
-/** Devuelve el rol del token, o null si es inválido. */
-export function roleForToken(token: string | null): Role | null {
+/** Identidad del token, o null si es inválido. */
+export function identityForToken(token: string | null): Identity | null {
   if (!token) return null;
-  if (BOOTSTRAP && token === BOOTSTRAP) return "admin";
-  return qByHash.get(hash(token))?.role ?? null;
-}
-
-/** Rol del token que viene en el header Authorization: Bearer de un request. */
-export function roleForRequest(req: Request): Role | null {
-  const header = req.headers.get("authorization") ?? "";
-  const bearer = header.startsWith("Bearer ") ? header.slice(7) : null;
-  return roleForToken(bearer);
-}
-
-/** Identidad (nombre + rol) del token, o null si es inválido. */
-export function identityForToken(token: string | null): { name: string; role: Role } | null {
-  if (!token) return null;
-  if (BOOTSTRAP && token === BOOTSTRAP) return { name: "admin", role: "admin" };
-  return qIdentByHash.get(hash(token)) ?? null;
+  if (BOOTSTRAP && token === BOOTSTRAP) return { name: "admin", role: "admin", vault: "default", isOwner: true };
+  const row = qIdentByHash.get(hash(token));
+  return row ? { ...row, isOwner: false } : null;
 }
 
 /** Identidad del token que viene en el header Authorization: Bearer. */
-export function identityForRequest(req: Request): { name: string; role: Role } | null {
+export function identityForRequest(req: Request): Identity | null {
   const header = req.headers.get("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7) : null;
   return identityForToken(bearer);
@@ -81,18 +63,18 @@ export function roleCan(role: Role, perm: Perm): boolean {
   return ROLE_PERMS[role].includes(perm);
 }
 
-/** Crea un token nuevo y devuelve el secreto en claro (solo se ve acá una vez). */
-export function addToken(name: string, role: Role): string {
+/** Crea un token nuevo en un vault y devuelve el secreto en claro (solo se ve acá una vez). */
+export function addToken(vault: string, name: string, role: Role): string {
   if (!ROLES.includes(role)) throw new Error(`rol inválido: ${role} (usá ${ROLES.join(" | ")})`);
   const token = "fg_" + randomBytes(24).toString("hex");
-  qInsert.run({ $name: name, $hash: hash(token), $role: role, $now: new Date().toISOString() });
+  qInsert.run({ $vault: vault, $name: name, $hash: hash(token), $role: role, $now: new Date().toISOString() });
   return token;
 }
 
-export function listTokens() {
-  return qList.all();
+export function listTokens(vault: string) {
+  return qList.all(vault);
 }
 
-export function revokeToken(name: string): boolean {
-  return qDelete.run(name).changes > 0;
+export function revokeToken(vault: string, name: string): boolean {
+  return qDelete.run(vault, name).changes > 0;
 }

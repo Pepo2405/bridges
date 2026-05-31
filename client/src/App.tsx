@@ -22,6 +22,7 @@ import {
   List,
   History,
   Check,
+  Boxes,
 } from "lucide-solid";
 import {
   state,
@@ -52,6 +53,7 @@ import { GraphView } from "~/components/GraphView";
 import { Backlinks } from "~/components/Backlinks";
 import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { TokenManager } from "~/components/TokenManager";
+import { VaultManager } from "~/components/VaultManager";
 import { MarkdownEditor } from "~/components/MarkdownEditor";
 import { ConfirmHost } from "~/components/ConfirmHost";
 import { CommandPalette, type Command } from "~/components/CommandPalette";
@@ -82,6 +84,26 @@ import { cn } from "~/lib/utils";
 
 function vaultName(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
+}
+
+function hostOf(serverUrl: string): string {
+  try {
+    return new URL(serverUrl).host;
+  } catch {
+    return serverUrl;
+  }
+}
+
+/**
+ * Etiqueta de una conexión (local path) para el switcher/gestor: si la sesión
+ * está abierta y el server reportó su vault, muestra `Vault @ host`; si no,
+ * cae al basename local. OJO: `vaultName(path)` es el basename LOCAL, distinto
+ * del campo `vaultName` que devuelve el server.
+ */
+function vaultLabel(localPath: string): string {
+  const sess = state.sessions[localPath];
+  if (sess?.remoteVaultName) return `${sess.remoteVaultName} @ ${hostOf(sess.serverUrl)}`;
+  return vaultName(localPath);
 }
 
 /** Texto del estado de sync de un vault para el switcher. */
@@ -397,6 +419,7 @@ const App: Component = () => {
   const [conflict, setConflict] = createSignal<Conflict | null>(null);
   const [showNew, setShowNew] = createSignal(false);
   const [showTokens, setShowTokens] = createSignal(false);
+  const [showVaults, setShowVaults] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
   const [historyDocId, setHistoryDocId] = createSignal<string | null>(null);
   const [newPrefill, setNewPrefill] = createSignal("");
@@ -630,6 +653,8 @@ const App: Component = () => {
     cmds.push({ id: "theme", label: "Cambiar tema (claro/oscuro)", group: "Acciones", run: toggleTheme });
     if (!s()?.authEnabled || s()?.role === "admin")
       cmds.push({ id: "tokens", label: "API keys", group: "Acciones", run: () => setShowTokens(true) });
+    if (s()?.isOwner)
+      cmds.push({ id: "vaults", label: "Vaults (gestionar)", group: "Acciones", run: () => setShowVaults(true) });
     cmds.push({ id: "add-vault", label: "Agregar vault", group: "Acciones", run: () => setShowAddVault(true) });
 
     for (const d of docs())
@@ -722,6 +747,11 @@ const App: Component = () => {
             >
               {theme() === "dark" ? <Sun class="h-4 w-4" /> : <Moon class="h-4 w-4" />}
             </Button>
+            <Show when={s()?.isOwner}>
+              <Button size="sm" variant="ghost" onClick={() => setShowVaults(true)} title="Vaults">
+                <Boxes class="h-4 w-4" />
+              </Button>
+            </Show>
             <Show when={!s()?.authEnabled || s()?.role === "admin"}>
               <Button size="sm" variant="ghost" onClick={() => setShowTokens(true)} title="API keys">
                 <KeyRound class="h-4 w-4" />
@@ -806,7 +836,7 @@ const App: Component = () => {
                 title="Cambiar de vault"
               >
                 <FolderOpen class="h-3.5 w-3.5 shrink-0" />
-                <span class="min-w-0 flex-1 truncate">{s() ? vaultName(s()!.vault) : ""}</span>
+                <span class="min-w-0 flex-1 truncate">{s() ? vaultLabel(s()!.vault) : ""}</span>
                 <ChevronsUpDown class="h-3.5 w-3.5 shrink-0" />
               </DropdownMenuTrigger>
               <DropdownMenuContent class="w-64">
@@ -822,7 +852,7 @@ const App: Component = () => {
                     >
                       <VaultSyncDot vault={conn.vault} />
                       <span class="min-w-0 flex-1">
-                        <span class="block truncate">{vaultName(conn.vault)}</span>
+                        <span class="block truncate">{vaultLabel(conn.vault)}</span>
                         <span class="block truncate text-xs text-muted-foreground">{vaultSyncLabel(conn.vault)}</span>
                       </span>
                       <Show when={state.activeVault === conn.vault}>
@@ -979,6 +1009,7 @@ const App: Component = () => {
 
       <NewDocDialog open={showNew()} initial={newPrefill()} onOpenChange={setShowNew} onCreate={onCreate} />
       <TokenManager open={showTokens()} onOpenChange={setShowTokens} />
+      <VaultManager open={showVaults()} onOpenChange={setShowVaults} />
       <CommandPalette open={showPalette()} onOpenChange={setShowPalette} commands={commands} />
       <HistoryDialog
         docId={historyDocId()}

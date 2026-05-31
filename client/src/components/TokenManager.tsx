@@ -1,6 +1,6 @@
 import { type Component, For, Show, createSignal, createEffect } from "solid-js";
 import { Key, Trash2, Copy, Check, RefreshCw, Plus } from "lucide-solid";
-import { activeApi } from "~/lib/store";
+import { activeApi, active } from "~/lib/store";
 import type { TokenInfo } from "~/lib/api";
 import {
   Dialog,
@@ -99,7 +99,8 @@ export const TokenManager: Component<{ open: boolean; onOpenChange: (o: boolean)
         <DialogHeader>
           <DialogTitle>API keys</DialogTitle>
           <DialogDescription>
-            Tokens de acceso al server. El secreto se muestra una sola vez, al crearlo.
+            Tokens de acceso al vault{active()?.remoteVaultName ? ` «${active()!.remoteVaultName}»` : " conectado"}. El
+            secreto se muestra una sola vez, al crearlo.
           </DialogDescription>
         </DialogHeader>
 

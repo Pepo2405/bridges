@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { writeDoc, removeDoc } from "./vault";
+import { migrate } from "./migrate";
 
 const DB_PATH = process.env.FORGE_DB ?? "forge.db";
 
@@ -8,51 +9,70 @@ export const db = new Database(DB_PATH, { create: true });
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA foreign_keys = ON;");
 
+// Migración al esquema multi-vault (idempotente). Debe correr ANTES de preparar
+// los db.query(...) de abajo, porque reconstruye documents/changes/tokens.
+migrate(db);
+
 db.exec(`
-  CREATE TABLE IF NOT EXISTS meta (
-    id        INTEGER PRIMARY KEY CHECK (id = 1),
-    last_seq  INTEGER NOT NULL DEFAULT 0
+  CREATE TABLE IF NOT EXISTS vaults (
+    slug       TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    last_seq   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS documents (
     id          TEXT PRIMARY KEY,
-    path        TEXT NOT NULL UNIQUE,
+    vault       TEXT NOT NULL,
+    path        TEXT NOT NULL,
     title       TEXT,
     content     TEXT NOT NULL,
     version     INTEGER NOT NULL DEFAULT 1,
     seq         INTEGER NOT NULL,
     deleted     INTEGER NOT NULL DEFAULT 0,
     updated_by  TEXT,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    UNIQUE (vault, path),
+    FOREIGN KEY (vault) REFERENCES vaults(slug)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_documents_seq ON documents(seq);
+  CREATE INDEX IF NOT EXISTS idx_documents_vault_seq ON documents(vault, seq);
 
   CREATE TABLE IF NOT EXISTS changes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    vault       TEXT NOT NULL,
     doc_id      TEXT NOT NULL,
     seq         INTEGER NOT NULL,
     author      TEXT,
     action      TEXT NOT NULL,
     created_at  TEXT NOT NULL,
-    FOREIGN KEY (doc_id) REFERENCES documents(id)
+    content     TEXT,
+    FOREIGN KEY (doc_id) REFERENCES documents(id),
+    FOREIGN KEY (vault) REFERENCES vaults(slug)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_changes_seq ON changes(seq);
+  CREATE INDEX IF NOT EXISTS idx_changes_vault_seq ON changes(vault, seq);
+  CREATE INDEX IF NOT EXISTS idx_changes_doc ON changes(doc_id);
 
-  INSERT OR IGNORE INTO meta (id, last_seq) VALUES (1, 0);
+  CREATE TABLE IF NOT EXISTS tokens (
+    vault       TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    token_hash  TEXT NOT NULL UNIQUE,
+    role        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (vault, name),
+    FOREIGN KEY (vault) REFERENCES vaults(slug)
+  );
+
+  INSERT OR IGNORE INTO vaults (slug, name, last_seq, created_at)
+    VALUES ('default', 'default', 0, '${new Date().toISOString()}');
 `);
 
-// Migración: snapshot del contenido por cambio (para diff/restaurar). En DBs
-// viejas la columna no existe; ADD COLUMN es barato. Ignoramos si ya está.
-try {
-  db.exec("ALTER TABLE changes ADD COLUMN content TEXT");
-} catch {
-  /* la columna ya existe */
-}
+export type Vault = { slug: string; name: string; last_seq: number; created_at: string };
 
 export type Doc = {
   id: string;
+  vault: string;
   path: string;
   title: string | null;
   content: string;
@@ -65,20 +85,24 @@ export type Doc = {
 
 export type Change = { seq: number; author: string | null; action: string; created_at: string };
 
-const qNextSeq = db.query<{ last_seq: number }, []>(
-  "UPDATE meta SET last_seq = last_seq + 1 WHERE id = 1 RETURNING last_seq",
+const qNextSeq = db.query<{ last_seq: number }, [string]>(
+  "UPDATE vaults SET last_seq = last_seq + 1 WHERE slug = ? RETURNING last_seq",
 );
-const DOC_COLS = "id, path, title, content, version, seq, deleted, updated_by, updated_at";
+const DOC_COLS = "id, vault, path, title, content, version, seq, deleted, updated_by, updated_at";
 const qDocById = db.query<Doc, [string]>(`SELECT ${DOC_COLS} FROM documents WHERE id = ?`);
-const qDocByPath = db.query<Doc, [string]>(`SELECT ${DOC_COLS} FROM documents WHERE path = ?`);
-const qSince = db.query<Doc, [number]>(`SELECT ${DOC_COLS} FROM documents WHERE seq > ? ORDER BY seq ASC`);
+const qDocByPath = db.query<Doc, [string, string]>(
+  `SELECT ${DOC_COLS} FROM documents WHERE vault = ? AND path = ?`,
+);
+const qSince = db.query<Doc, [string, number]>(
+  `SELECT ${DOC_COLS} FROM documents WHERE vault = ? AND seq > ? ORDER BY seq ASC`,
+);
 const qHistory = db.query<Change, [string]>(
   "SELECT seq, author, action, created_at FROM changes WHERE doc_id = ? ORDER BY seq DESC LIMIT 100",
 );
-const qLastSeq = db.query<{ last_seq: number }, []>("SELECT last_seq FROM meta WHERE id = 1");
+const qLastSeq = db.query<{ last_seq: number }, [string]>("SELECT last_seq FROM vaults WHERE slug = ?");
 const qInsert = db.query(
-  `INSERT INTO documents (id, path, title, content, version, seq, deleted, updated_by, updated_at)
-   VALUES ($id, $path, $title, $content, 1, $seq, 0, $author, $now)`,
+  `INSERT INTO documents (id, vault, path, title, content, version, seq, deleted, updated_by, updated_at)
+   VALUES ($id, $vault, $path, $title, $content, 1, $seq, 0, $author, $now)`,
 );
 const qUpdate = db.query(
   `UPDATE documents SET path=$path, title=$title, content=$content, version=version+1,
@@ -88,51 +112,77 @@ const qSoftDelete = db.query(
   `UPDATE documents SET deleted=1, version=version+1, seq=$seq, updated_by=$author, updated_at=$now WHERE id=$id`,
 );
 const qChange = db.query(
-  `INSERT INTO changes (doc_id, seq, author, action, created_at, content)
-   VALUES ($doc, $seq, $author, $action, $now, $content)`,
+  `INSERT INTO changes (vault, doc_id, seq, author, action, created_at, content)
+   VALUES ($vault, $doc, $seq, $author, $action, $now, $content)`,
 );
 const qVersion = db.query<{ content: string | null }, [string, number]>(
   "SELECT content FROM changes WHERE doc_id = ? AND seq = ?",
 );
 
+const qVaultBySlug = db.query<Vault, [string]>("SELECT slug, name, last_seq, created_at FROM vaults WHERE slug = ?");
+const qVaultList = db.query<Vault, []>("SELECT slug, name, last_seq, created_at FROM vaults ORDER BY created_at");
+const qVaultInsert = db.query(
+  "INSERT INTO vaults (slug, name, last_seq, created_at) VALUES ($slug, $name, 0, $now)",
+);
+
+/** Doc por id (global, sin scope). Para chequear pertenencia de vault internamente. */
 export function getDoc(id: string): Doc | null {
   return qDocById.get(id) ?? null;
 }
 
-export function getDocByPath(path: string): Doc | null {
-  return qDocByPath.get(path) ?? null;
+export function getDocByPath(vault: string, path: string): Doc | null {
+  return qDocByPath.get(vault, path) ?? null;
 }
 
-export function getLastSeq(): number {
-  return qLastSeq.get()!.last_seq;
+export function getLastSeq(vault: string): number {
+  return qLastSeq.get(vault)?.last_seq ?? 0;
 }
 
-/** Historial de cambios de un doc (más reciente primero, hasta 100). */
-export function getHistory(id: string): Change[] {
+/** Historial de cambios de un doc (más reciente primero, hasta 100). Vacío si no es del vault. */
+export function getHistory(vault: string, id: string): Change[] {
+  const doc = getDoc(id);
+  if (!doc || doc.vault !== vault) return [];
   return qHistory.all(id);
 }
 
-/** Contenido del doc tal como quedó en un cambio (seq). null si no se guardó snapshot. */
-export function getVersion(id: string, seq: number): string | null {
+/** Contenido del doc en un cambio (seq). null si no hay snapshot o no es del vault. */
+export function getVersion(vault: string, id: string, seq: number): string | null {
+  const doc = getDoc(id);
+  if (!doc || doc.vault !== vault) return null;
   return qVersion.get(id, seq)?.content ?? null;
 }
 
-export function syncSince(since: number): { documents: Doc[]; last_seq: number } {
-  const documents = qSince.all(since);
-  return { documents, last_seq: getLastSeq() };
+export function syncSince(vault: string, since: number): { documents: Doc[]; last_seq: number } {
+  const documents = qSince.all(vault, since);
+  return { documents, last_seq: getLastSeq(vault) };
+}
+
+export function getVault(slug: string): Vault | null {
+  return qVaultBySlug.get(slug) ?? null;
+}
+
+export function listVaults(): Vault[] {
+  return qVaultList.all();
+}
+
+/** Crea un vault nuevo. Lanza ConflictError si el slug ya existe. */
+export function createVault(slug: string, name: string): Vault {
+  if (getVault(slug)) throw new ConflictError("vault already exists");
+  qVaultInsert.run({ $slug: slug, $name: name, $now: new Date().toISOString() });
+  return getVault(slug)!;
 }
 
 /** Crea un documento nuevo. Asigna seq, escribe en SQLite y en disco. */
 export const createDoc = db.transaction(
-  (input: { path: string; title?: string | null; content: string; author?: string | null }) => {
-    if (getDocByPath(input.path)) throw new ConflictError("path already exists");
-    const seq = qNextSeq.get()!.last_seq;
+  (input: { vault: string; path: string; title?: string | null; content: string; author?: string | null }) => {
+    if (getDocByPath(input.vault, input.path)) throw new ConflictError("path already exists");
+    const seq = qNextSeq.get(input.vault)!.last_seq;
     const id = randomUUID();
     const now = new Date().toISOString();
     const title = input.title ?? deriveTitle(input.content, input.path);
-    qInsert.run({ $id: id, $path: input.path, $title: title, $content: input.content, $seq: seq, $author: input.author ?? null, $now: now });
-    qChange.run({ $doc: id, $seq: seq, $author: input.author ?? null, $action: "create", $now: now, $content: input.content });
-    writeDoc(input.path, input.content);
+    qInsert.run({ $id: id, $vault: input.vault, $path: input.path, $title: title, $content: input.content, $seq: seq, $author: input.author ?? null, $now: now });
+    qChange.run({ $vault: input.vault, $doc: id, $seq: seq, $author: input.author ?? null, $action: "create", $now: now, $content: input.content });
+    writeDoc(input.vault, input.path, input.content);
     return getDoc(id)!;
   },
 );
@@ -140,6 +190,7 @@ export const createDoc = db.transaction(
 /** Actualiza con versión optimista. Lanza ConflictError si base_version quedó vieja. */
 export const updateDoc = db.transaction(
   (input: {
+    vault: string;
     id: string;
     path: string;
     title?: string | null;
@@ -148,36 +199,36 @@ export const updateDoc = db.transaction(
     author?: string | null;
   }) => {
     const current = getDoc(input.id);
-    if (!current) throw new NotFoundError("doc not found");
+    if (!current || current.vault !== input.vault) throw new NotFoundError("doc not found");
     if (current.version !== input.base_version) throw new ConflictError("version mismatch", current);
 
-    // Si cambió el path, validar que el nuevo no choque con otro doc vivo.
+    // Si cambió el path, validar que el nuevo no choque con otro doc vivo del vault.
     if (input.path !== current.path) {
-      const other = getDocByPath(input.path);
+      const other = getDocByPath(input.vault, input.path);
       if (other && other.id !== input.id) throw new ConflictError("path already exists", other);
     }
 
-    const seq = qNextSeq.get()!.last_seq;
+    const seq = qNextSeq.get(input.vault)!.last_seq;
     const now = new Date().toISOString();
     const title = input.title ?? deriveTitle(input.content, input.path);
     qUpdate.run({ $id: input.id, $path: input.path, $title: title, $content: input.content, $seq: seq, $author: input.author ?? null, $now: now });
-    qChange.run({ $doc: input.id, $seq: seq, $author: input.author ?? null, $action: "update", $now: now, $content: input.content });
-    if (input.path !== current.path) removeDoc(current.path);
-    writeDoc(input.path, input.content);
+    qChange.run({ $vault: input.vault, $doc: input.id, $seq: seq, $author: input.author ?? null, $action: "update", $now: now, $content: input.content });
+    if (input.path !== current.path) removeDoc(input.vault, current.path);
+    writeDoc(input.vault, input.path, input.content);
     return getDoc(input.id)!;
   },
 );
 
 /** Borrado lógico. Propaga deleted=1 y borra el archivo en disco. */
-export const deleteDoc = db.transaction((id: string, author?: string | null) => {
+export const deleteDoc = db.transaction((vault: string, id: string, author?: string | null) => {
   const current = getDoc(id);
-  if (!current) throw new NotFoundError("doc not found");
+  if (!current || current.vault !== vault) throw new NotFoundError("doc not found");
   if (current.deleted) return current;
-  const seq = qNextSeq.get()!.last_seq;
+  const seq = qNextSeq.get(vault)!.last_seq;
   const now = new Date().toISOString();
   qSoftDelete.run({ $id: id, $seq: seq, $author: author ?? null, $now: now });
-  qChange.run({ $doc: id, $seq: seq, $author: author ?? null, $action: "delete", $now: now, $content: null });
-  removeDoc(current.path);
+  qChange.run({ $vault: vault, $doc: id, $seq: seq, $author: author ?? null, $action: "delete", $now: now, $content: null });
+  removeDoc(vault, current.path);
   return getDoc(id)!;
 });
 

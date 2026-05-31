@@ -1,14 +1,21 @@
 // Importa todos los .md de un vault de Obsidian al server Forge vía la API.
-// Uso: bun run src/import-vault.ts "/ruta/al/vault" [http://localhost:4321]
+// Uso: bun run src/import-vault.ts "/ruta/al/vault" [http://localhost:4321] [--token <tok>]
+// El vault destino sale del token (--token o env FORGE_TOKEN).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SRC = process.argv[2];
-const SERVER = (process.argv[3] ?? "http://localhost:4321").replace(/\/$/, "");
+const args = process.argv.slice(2);
+const tokIdx = args.indexOf("--token");
+const TOKEN = (tokIdx >= 0 ? args.splice(tokIdx, 2)[1] : undefined) ?? process.env.FORGE_TOKEN ?? null;
+
+const SRC = args[0];
+const SERVER = (args[1] ?? "http://localhost:4321").replace(/\/$/, "");
 if (!SRC) {
   console.error('Falta la ruta del vault. Ej: bun run src/import-vault.ts "/Users/pepo/Documents/PxSol-Vault"');
   process.exit(1);
 }
+
+const authHeaders: Record<string, string> = TOKEN ? { authorization: `Bearer ${TOKEN}` } : {};
 
 const SKIP_DIRS = new Set([".obsidian", ".git", "node_modules", ".trash"]);
 
@@ -36,7 +43,7 @@ for (const file of files) {
   try {
     const r = await fetch(`${SERVER}/documents`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders },
       body: JSON.stringify({ path, content, author: "pxsol-import" }),
     });
     if (r.status === 201) {

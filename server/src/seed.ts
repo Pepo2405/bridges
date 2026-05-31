@@ -38,10 +38,10 @@ Ver también [[pixel/setup]] para el patrón de entorno.
 ];
 
 for (const d of docs) {
-  if (getDocByPath(d.path)) {
+  if (getDocByPath("default", d.path)) {
     console.log(`skip (existe): ${d.path}`);
     continue;
   }
-  const doc = createDoc({ path: d.path, content: d.content, author: "seed" });
+  const doc = createDoc({ vault: "default", path: d.path, content: d.content, author: "seed" });
   console.log(`creado: ${doc.path} (seq=${doc.seq})`);
 }

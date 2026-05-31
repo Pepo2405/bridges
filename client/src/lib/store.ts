@@ -49,6 +49,9 @@ export type Session = {
   role: string | null; // rol del token (viewer/editor/admin), null si no hay auth
   authEnabled: boolean; // si el server pide token
   author: string; // identidad para el historial: nombre del token (o DEFAULT_AUTHOR sin auth)
+  remoteVault?: string; // slug del vault server-side (multi-vault); undefined en servers viejos
+  remoteVaultName?: string; // nombre legible del vault server-side
+  isOwner?: boolean; // el token es el "server owner" (gestiona vaults)
   error: string | null;
 };
 
@@ -640,6 +643,9 @@ export async function openSession(opts: { vault: string; serverUrl?: string; tok
         role: who.role,
         authEnabled: who.authEnabled,
         author: who.name || DEFAULT_AUTHOR,
+        remoteVault: who.vault,
+        remoteVaultName: who.vaultName,
+        isOwner: who.isOwner,
       });
     } catch {
       setState("sessions", opts.vault, {

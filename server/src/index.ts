@@ -6,21 +6,24 @@ import {
   getLastSeq,
   getHistory,
   getVersion,
+  createVault,
+  listVaults,
+  getVault,
   ConflictError,
   NotFoundError,
 } from "./db";
 import { addClient, broadcastChange, clientCount } from "./events";
 import { searchDocs } from "./search";
+import { ensureVaultDir, isValidSlug } from "./vault";
 import {
   authEnabled,
-  roleForToken,
-  roleForRequest,
-  identityForRequest,
+  identityForToken,
   roleCan,
   addToken,
   listTokens,
   revokeToken,
   ROLES,
+  type Identity,
   type Perm,
   type Role,
 } from "./auth";
@@ -47,20 +50,23 @@ function permFor(method: string): Perm {
   return "read";
 }
 
+type AuthResult = { identity: Identity | null } | { denied: Response };
+
 /**
- * Verifica el token y su permiso. Devuelve null si pasa, o la Response de error.
- * El token va en `Authorization: Bearer`, o por query `?token=` solo en /events
- * (el EventSource del browser no puede mandar headers).
+ * Verifica el token y su permiso. Devuelve la identidad resuelta (null si la
+ * auth está apagada) o la Response de error. El token va en `Authorization:
+ * Bearer`, o por query `?token=` solo en /events (el EventSource del browser no
+ * puede mandar headers). El vault del request sale de la identidad.
  */
-function checkAuth(req: Request, url: URL): Response | null {
-  if (!authEnabled()) return null;
+function checkAuth(req: Request, url: URL): AuthResult {
+  if (!authEnabled()) return { identity: null };
   const header = req.headers.get("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7) : null;
   const qToken = url.pathname === "/events" ? url.searchParams.get("token") : null;
-  const role = roleForToken(bearer ?? qToken);
-  if (!role) return json({ error: "unauthorized" }, 401);
-  if (!roleCan(role, permFor(req.method))) return json({ error: "forbidden" }, 403);
-  return null;
+  const identity = identityForToken(bearer ?? qToken);
+  if (!identity) return { denied: json({ error: "unauthorized" }, 401) };
+  if (!roleCan(identity.role, permFor(req.method))) return { denied: json({ error: "forbidden" }, 403) };
+  return { identity };
 }
 
 const server = Bun.serve({
@@ -74,29 +80,63 @@ const server = Bun.serve({
 
     // --- Health: público, para el healthcheck de Coolify ---
     if (pathname === "/health") {
-      return json({ ok: true, last_seq: getLastSeq(), clients: clientCount() });
+      return json({ ok: true, vaults: listVaults().length, clients: clientCount() });
     }
 
-    const denied = checkAuth(req, url);
-    if (denied) return denied;
+    const auth = checkAuth(req, url);
+    if ("denied" in auth) return auth.denied;
+    const identity = auth.identity;
+    // Vault del request: el del token (o `default` si la auth está apagada).
+    const vault = identity?.vault ?? "default";
 
-    // --- Identidad: GET /whoami → permisos del token actual ---
-    // Si la auth está apagada, role=null y el cliente asume permisos plenos.
+    // --- Identidad: GET /whoami → permisos + vault del token actual ---
     if (pathname === "/whoami" && req.method === "GET") {
       const enabled = authEnabled();
-      const ident = enabled ? identityForRequest(req) : null;
-      return json({ authEnabled: enabled, role: ident?.role ?? null, name: ident?.name ?? null });
+      const v = getVault(vault);
+      return json({
+        authEnabled: enabled,
+        role: identity?.role ?? null,
+        name: identity?.name ?? null,
+        vault,
+        vaultName: v?.name ?? vault,
+        isOwner: identity?.isOwner ?? false,
+      });
     }
 
-    // --- Gestión de tokens (API keys): solo admin ---
-    // checkAuth ya validó read/write/delete genérico; acá exigimos rol admin
-    // (un viewer tiene read y podría listar tokens si no lo bloqueáramos).
+    // --- Gestión de vaults (cross-vault): solo el owner ---
+    if (pathname === "/vaults") {
+      if (!identity?.isOwner) return json({ error: "forbidden" }, 403);
+
+      if (req.method === "GET") return json({ vaults: listVaults() });
+
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => null);
+        const slug = typeof body?.slug === "string" ? body.slug.trim() : "";
+        const name = typeof body?.name === "string" && body.name.trim() ? body.name.trim() : slug;
+        if (!isValidSlug(slug)) {
+          return json({ error: "slug inválido: usá ^[a-z0-9][a-z0-9-]{0,63}$" }, 400);
+        }
+        try {
+          const v = createVault(slug, name);
+          ensureVaultDir(slug);
+          const token = addToken(slug, "admin", "admin");
+          return json({ vault: v, token }, 201); // el secreto se ve solo acá
+        } catch (e) {
+          if (e instanceof ConflictError) return json({ error: "el vault ya existe" }, 409);
+          return json({ error: String(e) }, 400);
+        }
+      }
+
+      return json({ error: "not found" }, 404);
+    }
+
+    // --- Gestión de tokens (API keys) del vault conectado: solo admin ---
     // Sin auth se permite: sirve para crear el primer token y arrancar la auth.
     if (pathname === "/tokens" || pathname.startsWith("/tokens/")) {
-      if (authEnabled() && roleForRequest(req) !== "admin") return json({ error: "forbidden" }, 403);
+      if (authEnabled() && identity?.role !== "admin") return json({ error: "forbidden" }, 403);
 
       if (pathname === "/tokens" && req.method === "GET") {
-        return json({ tokens: listTokens() });
+        return json({ tokens: listTokens(vault) });
       }
 
       if (pathname === "/tokens" && req.method === "POST") {
@@ -107,10 +147,10 @@ const server = Bun.serve({
           return json({ error: `name requerido y role en ${ROLES.join(" | ")}` }, 400);
         }
         try {
-          const token = addToken(name, role);
+          const token = addToken(vault, name, role);
           return json({ name, role, token }, 201); // el secreto se ve solo acá
         } catch (e) {
-          // PRIMARY KEY (name) duplicado u otra constraint.
+          // PRIMARY KEY (vault, name) duplicado u otra constraint.
           return json({ error: `no se pudo crear el token: ${String(e)}` }, 409);
         }
       }
@@ -118,7 +158,7 @@ const server = Bun.serve({
       const tokMatch = pathname.match(/^\/tokens\/(.+)$/);
       if (tokMatch && req.method === "DELETE") {
         const name = decodeURIComponent(tokMatch[1]);
-        return revokeToken(name) ? json({ ok: true }) : json({ error: "token no encontrado" }, 404);
+        return revokeToken(vault, name) ? json({ ok: true }) : json({ error: "token no encontrado" }, 404);
       }
 
       return json({ error: "not found" }, 404);
@@ -128,13 +168,13 @@ const server = Bun.serve({
     if (pathname === "/sync" && req.method === "GET") {
       const since = Number(url.searchParams.get("since") ?? "0");
       if (!Number.isFinite(since) || since < 0) return json({ error: "invalid since" }, 400);
-      return json(syncSince(since));
+      return json(syncSince(vault, since));
     }
 
     // --- Búsqueda full-text: GET /search?q=... ---
     if (pathname === "/search" && req.method === "GET") {
       const q = url.searchParams.get("q") ?? "";
-      return json({ results: searchDocs(q) });
+      return json({ results: searchDocs(vault, q) });
     }
 
     // --- SSE: GET /events ---
@@ -144,8 +184,8 @@ const server = Bun.serve({
         start(controller) {
           const enc = new TextEncoder();
           const send = (data: string) => controller.enqueue(enc.encode(data));
-          send(`data: ${JSON.stringify({ type: "hello", seq: getLastSeq() })}\n\n`);
-          const remove = addClient({ send });
+          send(`data: ${JSON.stringify({ type: "hello", seq: getLastSeq(vault) })}\n\n`);
+          const remove = addClient(vault, { send });
           // keep-alive: comentario SSE cada 25s para que no muera el proxy
           const ping = setInterval(() => {
             try {
@@ -181,12 +221,13 @@ const server = Bun.serve({
       }
       try {
         const doc = createDoc({
+          vault,
           path: body.path,
           title: body.title ?? null,
           content: body.content,
           author: body.author ?? null,
         });
-        broadcastChange(doc.seq);
+        broadcastChange(vault, doc.seq);
         return json(doc, 201);
       } catch (e) {
         if (e instanceof ConflictError) return json({ conflict: true, error: e.message, server: e.server }, 409);
@@ -197,13 +238,13 @@ const server = Bun.serve({
     // --- Historial: GET /documents/:id/history ---
     const histMatch = pathname.match(/^\/documents\/([^/]+)\/history$/);
     if (histMatch && req.method === "GET") {
-      return json({ history: getHistory(decodeURIComponent(histMatch[1])) });
+      return json({ history: getHistory(vault, decodeURIComponent(histMatch[1])) });
     }
 
     // --- Contenido de una versión: GET /documents/:id/versions/:seq ---
     const verMatch = pathname.match(/^\/documents\/([^/]+)\/versions\/(\d+)$/);
     if (verMatch && req.method === "GET") {
-      const content = getVersion(decodeURIComponent(verMatch[1]), Number(verMatch[2]));
+      const content = getVersion(vault, decodeURIComponent(verMatch[1]), Number(verMatch[2]));
       if (content == null) return json({ error: "versión sin snapshot" }, 404);
       return json({ seq: Number(verMatch[2]), content });
     }
@@ -220,6 +261,7 @@ const server = Bun.serve({
         }
         try {
           const doc = updateDoc({
+            vault,
             id,
             path: body.path,
             title: body.title ?? null,
@@ -227,7 +269,7 @@ const server = Bun.serve({
             base_version: body.base_version,
             author: body.author ?? null,
           });
-          broadcastChange(doc.seq);
+          broadcastChange(vault, doc.seq);
           return json(doc);
         } catch (e) {
           if (e instanceof ConflictError) return json({ conflict: true, error: e.message, server: e.server }, 409);
@@ -238,8 +280,8 @@ const server = Bun.serve({
 
       if (req.method === "DELETE") {
         try {
-          const doc = deleteDoc(id, req.headers.get("x-author"));
-          broadcastChange(doc.seq);
+          const doc = deleteDoc(vault, id, req.headers.get("x-author"));
+          broadcastChange(vault, doc.seq);
           return json(doc);
         } catch (e) {
           if (e instanceof NotFoundError) return json({ error: e.message }, 404);
