@@ -19,6 +19,7 @@ import {
   KeyRound,
   Sun,
   Moon,
+  List,
 } from "lucide-solid";
 import {
   state,
@@ -51,6 +52,12 @@ import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { TokenManager } from "~/components/TokenManager";
 import { MarkdownEditor } from "~/components/MarkdownEditor";
 import { ConfirmHost } from "~/components/ConfirmHost";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "~/components/ui/dropdown-menu";
 import { askConfirm } from "~/lib/confirm";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -435,6 +442,7 @@ const App: Component = () => {
   const [newPrefill, setNewPrefill] = createSignal("");
   const [renameTarget, setRenameTarget] = createSignal<RenameTarget | null>(null);
   const [mode, setMode] = createSignal<"edit" | "preview">("edit");
+  const [editorApi, setEditorApi] = createSignal<{ scrollToLine: (line: number) => void } | null>(null);
   const [query, setQuery] = createSignal("");
   const [hits, setHits] = createSignal<SearchHit[]>([]);
   const [view, setView] = createSignal<"editor" | "graph">("editor");
@@ -591,6 +599,20 @@ const App: Component = () => {
   const preview = createMemo(() => {
     setWikiResolver(createResolver(docs())); // resolver al día antes de parsear
     return renderMarkdown(draft());
+  });
+
+  // Encabezados de la nota actual para el outline (ignora bloques de código).
+  const outline = createMemo(() => {
+    const out: { level: number; text: string; line: number }[] = [];
+    let inFence = false;
+    draft().split("\n").forEach((ln, i) => {
+      if (/^```/.test(ln)) inFence = !inFence;
+      else if (!inFence) {
+        const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(ln);
+        if (m) out.push({ level: m[1].length, text: m[2], line: i });
+      }
+    });
+    return out;
   });
 
   // Click en un [[wikilink]] del preview navega a la nota destino.
@@ -797,6 +819,27 @@ const App: Component = () => {
                     </Show>
                     <span class="text-xs text-muted-foreground">v{baseVersion()}</span>
                     <div class="ml-auto flex items-center gap-1.5">
+                      <Show when={mode() === "edit" && outline().length}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            class="inline-flex h-8 items-center rounded-md px-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            title="Índice de la nota"
+                          >
+                            <List class="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent class="max-h-80 overflow-auto">
+                            <For each={outline()}>
+                              {(h) => (
+                                <DropdownMenuItem onSelect={() => editorApi()?.scrollToLine(h.line)}>
+                                  <span class="truncate" style={{ "padding-left": `${(h.level - 1) * 12}px` }}>
+                                    {h.text}
+                                  </span>
+                                </DropdownMenuItem>
+                              )}
+                            </For>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </Show>
                       <div class="flex items-center rounded-md border p-0.5">
                         <button
                           onClick={() => setMode("edit")}
@@ -855,6 +898,7 @@ const App: Component = () => {
                           setDirty(true);
                         }}
                         onSave={onSave}
+                        onReady={(a) => setEditorApi(a)}
                       />
                     </Show>
                   </div>

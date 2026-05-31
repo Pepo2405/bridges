@@ -82,6 +82,7 @@ export const MarkdownEditor: Component<{
   linkTargets?: () => LinkTarget[];
   onChange: (v: string) => void;
   onSave?: () => void;
+  onReady?: (api: { scrollToLine: (line: number) => void }) => void;
 }> = (props) => {
   let parent!: HTMLDivElement;
   let view: EditorView | undefined;
@@ -113,6 +114,16 @@ export const MarkdownEditor: Component<{
           }),
         ],
       }),
+    });
+
+    props.onReady?.({
+      scrollToLine: (line: number) => {
+        if (!view) return;
+        const n = Math.max(1, Math.min(line + 1, view.state.doc.lines));
+        const l = view.state.doc.line(n);
+        view.dispatch({ selection: { anchor: l.from }, scrollIntoView: true });
+        view.focus();
+      },
     });
   });
 
