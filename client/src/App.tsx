@@ -22,6 +22,7 @@ import {
   History,
   Check,
   Boxes,
+  Settings,
 } from "lucide-solid";
 import {
   state,
@@ -53,6 +54,7 @@ import { Backlinks } from "~/components/Backlinks";
 import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { TokenManager } from "~/components/TokenManager";
 import { VaultManager } from "~/components/VaultManager";
+import { SettingsDialog } from "~/components/SettingsDialog";
 import { MarkdownEditor } from "~/components/MarkdownEditor";
 import { ConfirmHost } from "~/components/ConfirmHost";
 import { CommandPalette, type Command } from "~/components/CommandPalette";
@@ -420,6 +422,7 @@ const App: Component = () => {
   const [showNew, setShowNew] = createSignal(false);
   const [showTokens, setShowTokens] = createSignal(false);
   const [showVaults, setShowVaults] = createSignal(false);
+  const [showSettings, setShowSettings] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
   const [historyDocId, setHistoryDocId] = createSignal<string | null>(null);
   const [newPrefill, setNewPrefill] = createSignal("");
@@ -661,6 +664,7 @@ const App: Component = () => {
     });
     cmds.push({ id: "sync", label: "Sincronizar ahora", group: "Acciones", run: () => pull() });
     cmds.push({ id: "theme", label: "Cambiar tema (claro/oscuro)", group: "Acciones", run: toggleTheme });
+    cmds.push({ id: "settings", label: "Configuración / Tema", group: "Acciones", run: () => setShowSettings(true) });
     if (!s()?.authEnabled || s()?.role === "admin")
       cmds.push({ id: "tokens", label: "API keys", group: "Acciones", run: () => setShowTokens(true) });
     if (s()?.isOwner)
@@ -756,6 +760,9 @@ const App: Component = () => {
               title={theme() === "dark" ? "Tema claro" : "Tema oscuro"}
             >
               {theme() === "dark" ? <Sun class="h-4 w-4" /> : <Moon class="h-4 w-4" />}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowSettings(true)} title="Configuración">
+              <Settings class="h-4 w-4" />
             </Button>
             <Show when={s()?.isOwner}>
               <Button size="sm" variant="ghost" onClick={() => setShowVaults(true)} title="Vaults">
@@ -1047,6 +1054,7 @@ const App: Component = () => {
       <NewDocDialog open={showNew()} initial={newPrefill()} onOpenChange={setShowNew} onCreate={onCreate} />
       <TokenManager open={showTokens()} onOpenChange={setShowTokens} />
       <VaultManager open={showVaults()} onOpenChange={setShowVaults} />
+      <SettingsDialog open={showSettings()} onOpenChange={setShowSettings} />
       <CommandPalette open={showPalette()} onOpenChange={setShowPalette} commands={commands} />
       <HistoryDialog
         docId={historyDocId()}
