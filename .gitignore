@@ -10,6 +10,7 @@ client/src-tauri/gen/
 server/forge.db
 server/forge.db-wal
 server/forge.db-shm
+server/forge.db.bak-*
 server/vault/
 
 # misc
