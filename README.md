@@ -54,7 +54,7 @@ La fuente de verdad son **archivos `.md` en disco**. El servidor mantiene la cop
 - Editor con CodeMirror (syntax highlight, autocompletado de `[[wikilinks]]`).
 - MCP server sobre el índice para búsqueda semántica desde Claude Code.
 - **Firma + notarización** del `.dmg` (Apple Developer ID) para distribuir sin warnings de Gatekeeper. Hoy sale con firma ad-hoc.
-- **Build universal** (Intel + ARM) si algún Mac del equipo no es Apple Silicon. Hoy es arm64.
+- **Firma/notarización** en el pipeline de release (hoy los instaladores salen sin firmar; ver [Descargas](#descargas-instaladores)).
 - **Protección contra vaciado**: hoy un `editor` no puede borrar (`DELETE` es admin), pero sí puede sobreescribir el contenido de una nota con vacío vía update — no hay historial de versiones. Una papelera/versionado lo cubriría.
 
 ### Resuelto
@@ -66,6 +66,37 @@ La fuente de verdad son **archivos `.md` en disco**. El servidor mantiene la cop
 
 Stack: **Bun + bun:sqlite** (server), **Tauri 2 + SolidJS + shadcn-solid + Tailwind** (cliente).
 > Nota: el spec original proponía Vue; se eligió **SolidJS** por performance.
+
+## Descargas (instaladores)
+
+Los instaladores para macOS, Windows y Linux se compilan en CI y se publican en la
+**[página de Releases](https://github.com/Pepo2405/forge/releases)** del repo. El repo es
+privado: hay que estar logueado en GitHub con acceso al repo para descargarlos.
+
+| OS | Archivo | Notas |
+|----|---------|-------|
+| macOS | `Bridges_<version>_universal.dmg` | Intel + Apple Silicon |
+| Windows | `Bridges_<version>_x64-setup.exe` (NSIS) o `..._x64_en-US.msi` | |
+| Linux | `Bridges_<version>_amd64.AppImage` o `..._amd64.deb` | |
+
+**Sin firmar** — la primera vez el SO avisa:
+- **macOS**: click derecho sobre la app → *Abrir* (o `xattr -cr /Applications/Bridges.app` si la marca como dañada).
+- **Windows**: en el aviso de SmartScreen, *Más info → Ejecutar de todos modos*.
+- **Linux**: al `.AppImage` dale permisos (`chmod +x`) y ejecutalo; o instalá el `.deb` (`sudo dpkg -i`).
+
+### Publicar una versión nueva
+
+El workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) corre al pushear un tag `v*`:
+
+```bash
+# 1) Alinear la versión en client/src-tauri/tauri.conf.json (y Cargo.toml) con el tag
+# 2) Taggear y pushear
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions compila los 3 OS en paralelo y publica el Release con los assets. También se
+puede disparar a mano desde la pestaña **Actions** (usa la versión de `tauri.conf.json`).
 
 ## Correr
 
@@ -94,7 +125,10 @@ cd client
 bun run dev             # http://localhost:1420
 ```
 
-## Empaquetar (.dmg)
+## Empaquetar (.dmg) — build local
+
+> Para distribuir, no hace falta compilar a mano: el CI genera los instaladores de los 3 OS
+> (ver [Descargas](#descargas-instaladores)). Esto es para un build local puntual.
 
 Requiere el toolchain de **Rust** (`rustup`). Para macOS Apple Silicon:
 

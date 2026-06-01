@@ -1,0 +1,79 @@
+name: Release
+
+# Compila los instaladores de Bridges para macOS, Windows y Linux y los publica
+# como assets de un GitHub Release. El repo es privado: solo quienes tienen acceso
+# (logueados en GitHub) pueden descargarlos.
+#
+# Disparo:
+#   - push de un tag v* (ej: git tag v0.1.0 && git push origin v0.1.0) → release con ese tag
+#   - manual desde la pestaña Actions (usa la versión de tauri.conf.json como tag)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # crear el release y subir assets (usa el GITHUB_TOKEN del runner)
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: "--target universal-apple-darwin" # .dmg universal (Intel + Apple Silicon)
+          - os: ubuntu-22.04
+            args: "" # .AppImage + .deb
+          - os: windows-latest
+            args: "" # .msi (WiX) + .exe (NSIS)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # En macOS necesitamos ambas arquitecturas para el build universal.
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./client/src-tauri
+
+      - name: Linux deps (Tauri 2)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            build-essential curl wget file libssl-dev libxdo-dev
+
+      - name: Install frontend deps
+        run: bun install
+        working-directory: ./client
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Para firmar/notarizar más adelante (sin rehacer el pipeline), agregar acá:
+          #   macOS:   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+          #            APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+          #   Windows: configurar bundle.windows.certificateThumbprint en tauri.conf.json
+        with:
+          projectPath: ./client
+          # En push de tag usa el tag; en disparo manual usa la versión de tauri.conf.json.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v__VERSION__' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Bridges {0}', github.ref_name) || 'Bridges v__VERSION__' }}
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
