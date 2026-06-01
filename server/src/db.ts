@@ -85,6 +85,16 @@ export type Doc = {
 
 export type Change = { seq: number; author: string | null; action: string; created_at: string };
 
+/** Ítem de la papelera: doc borrado, sin content (listado liviano). */
+export type TrashItem = {
+  id: string;
+  path: string;
+  title: string | null;
+  updated_by: string | null;
+  updated_at: string;
+  seq: number;
+};
+
 const qNextSeq = db.query<{ last_seq: number }, [string]>(
   "UPDATE vaults SET last_seq = last_seq + 1 WHERE slug = ? RETURNING last_seq",
 );
@@ -118,6 +128,14 @@ const qChange = db.query(
 const qVersion = db.query<{ content: string | null }, [string, number]>(
   "SELECT content FROM changes WHERE doc_id = ? AND seq = ?",
 );
+const qTrash = db.query<TrashItem, [string]>(
+  "SELECT id, path, title, updated_by, updated_at, seq FROM documents WHERE vault = ? AND deleted = 1 ORDER BY seq DESC",
+);
+const qRestore = db.query(
+  `UPDATE documents SET deleted=0, version=version+1, seq=$seq, updated_by=$author, updated_at=$now WHERE id=$id`,
+);
+const qPurgeChanges = db.query("DELETE FROM changes WHERE doc_id = ?");
+const qPurgeDoc = db.query("DELETE FROM documents WHERE id = ?");
 
 const qVaultBySlug = db.query<Vault, [string]>("SELECT slug, name, last_seq, created_at FROM vaults WHERE slug = ?");
 const qVaultList = db.query<Vault, []>("SELECT slug, name, last_seq, created_at FROM vaults ORDER BY created_at");
@@ -230,6 +248,38 @@ export const deleteDoc = db.transaction((vault: string, id: string, author?: str
   qChange.run({ $vault: vault, $doc: id, $seq: seq, $author: author ?? null, $action: "delete", $now: now, $content: null });
   removeDoc(vault, current.path);
   return getDoc(id)!;
+});
+
+/** Docs borrados del vault (papelera), más reciente primero. */
+export function listTrash(vault: string): TrashItem[] {
+  return qTrash.all(vault);
+}
+
+/**
+ * Restaura un doc borrado: deleted=1→0, bump seq, reescribe el .md en disco.
+ * Idempotente si ya está vivo, NotFoundError si no existe o no es del vault. El
+ * path nunca colisiona: UNIQUE(vault, path) lo mantiene reservado mientras está
+ * borrado (ningún otro doc vivo puede ocuparlo).
+ */
+export const restoreDoc = db.transaction((vault: string, id: string, author?: string | null) => {
+  const current = getDoc(id);
+  if (!current || current.vault !== vault) throw new NotFoundError("doc not found");
+  if (!current.deleted) return current;
+  const seq = qNextSeq.get(vault)!.last_seq;
+  const now = new Date().toISOString();
+  qRestore.run({ $id: id, $seq: seq, $author: author ?? null, $now: now });
+  qChange.run({ $vault: vault, $doc: id, $seq: seq, $author: author ?? null, $action: "restore", $now: now, $content: current.content });
+  writeDoc(vault, current.path, current.content);
+  return getDoc(id)!;
+});
+
+/** Borrado físico de un doc de la papelera (fila + su historial). Sólo si está borrado. */
+export const purgeDoc = db.transaction((vault: string, id: string) => {
+  const current = getDoc(id);
+  if (!current || current.vault !== vault) throw new NotFoundError("doc not found");
+  if (!current.deleted) throw new NotFoundError("doc not in trash");
+  qPurgeChanges.run(id);
+  qPurgeDoc.run(id);
 });
 
 function deriveTitle(content: string, path: string): string {

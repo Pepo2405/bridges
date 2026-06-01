@@ -43,6 +43,8 @@ import {
   setNotice,
   resolveConflictKeepMine,
   resolveConflictKeepServer,
+  confirmBulkDelete,
+  cancelBulkDelete,
 } from "~/lib/store";
 import { buildTree, renderMarkdown, setWikiResolver, parseFrontmatter } from "~/lib/markdown";
 import { buildBacklinks, createResolver, displayName } from "~/lib/links";
@@ -55,6 +57,7 @@ import { ConflictDialog, type Conflict } from "~/components/ConflictDialog";
 import { TokenManager } from "~/components/TokenManager";
 import { VaultManager } from "~/components/VaultManager";
 import { SettingsDialog } from "~/components/SettingsDialog";
+import { TrashDialog } from "~/components/TrashDialog";
 import { MarkdownEditor } from "~/components/MarkdownEditor";
 import { ConfirmHost } from "~/components/ConfirmHost";
 import { CommandPalette, type Command } from "~/components/CommandPalette";
@@ -423,6 +426,7 @@ const App: Component = () => {
   const [showTokens, setShowTokens] = createSignal(false);
   const [showVaults, setShowVaults] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
+  const [showTrash, setShowTrash] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
   const [historyDocId, setHistoryDocId] = createSignal<string | null>(null);
   const [newPrefill, setNewPrefill] = createSignal("");
@@ -481,6 +485,26 @@ const App: Component = () => {
         setDraft(content!);
         setBaseVersion(version!);
       }
+    });
+  });
+
+  // Guardia anti-vaciado: si el server frenó un borrado masivo, pedir confirmación.
+  let guardPrompting = false;
+  createEffect(() => {
+    const sess = active();
+    const guard = sess?.bulkGuard;
+    if (!guard || guardPrompting) return;
+    const vault = sess!.vault;
+    guardPrompting = true;
+    askConfirm({
+      title: "¿Borrado masivo?",
+      description: `Se está intentando borrar ${guard.count} nota(s) en poco tiempo. Confirmá para continuar o cancelá para revisar.`,
+      confirmText: "Borrar igual",
+      destructive: true,
+    }).then((ok) => {
+      guardPrompting = false;
+      if (ok) confirmBulkDelete(vault);
+      else cancelBulkDelete(vault);
     });
   });
 
@@ -665,6 +689,8 @@ const App: Component = () => {
     cmds.push({ id: "sync", label: "Sincronizar ahora", group: "Acciones", run: () => pull() });
     cmds.push({ id: "theme", label: "Cambiar tema (claro/oscuro)", group: "Acciones", run: toggleTheme });
     cmds.push({ id: "settings", label: "Configuración / Tema", group: "Acciones", run: () => setShowSettings(true) });
+    if (s()?.perms.write)
+      cmds.push({ id: "trash", label: "Papelera", group: "Acciones", run: () => setShowTrash(true) });
     if (!s()?.authEnabled || s()?.role === "admin")
       cmds.push({ id: "tokens", label: "API keys", group: "Acciones", run: () => setShowTokens(true) });
     if (s()?.isOwner)
@@ -764,6 +790,11 @@ const App: Component = () => {
             <Button size="sm" variant="ghost" onClick={() => setShowSettings(true)} title="Configuración">
               <Settings class="h-4 w-4" />
             </Button>
+            <Show when={s()?.perms.write}>
+              <Button size="sm" variant="ghost" onClick={() => setShowTrash(true)} title="Papelera">
+                <Trash2 class="h-4 w-4" />
+              </Button>
+            </Show>
             <Show when={s()?.isOwner}>
               <Button size="sm" variant="ghost" onClick={() => setShowVaults(true)} title="Vaults">
                 <Boxes class="h-4 w-4" />
@@ -1055,6 +1086,7 @@ const App: Component = () => {
       <TokenManager open={showTokens()} onOpenChange={setShowTokens} />
       <VaultManager open={showVaults()} onOpenChange={setShowVaults} />
       <SettingsDialog open={showSettings()} onOpenChange={setShowSettings} />
+      <TrashDialog open={showTrash()} onOpenChange={setShowTrash} />
       <CommandPalette open={showPalette()} onOpenChange={setShowPalette} commands={commands} />
       <HistoryDialog
         docId={historyDocId()}

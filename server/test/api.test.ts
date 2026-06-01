@@ -517,3 +517,113 @@ describe("server sin auth", () => {
     expect(r.status).toBe(201);
   });
 });
+
+describe("papelera: restaurar y borrado definitivo", () => {
+  let base: string;
+  let cleanup: () => void;
+  let vault: string;
+  let viewer: string;
+  let editor: string;
+
+  const create = async (path: string, content = "x") =>
+    await (
+      await fetch(`${base}/documents`, {
+        method: "POST",
+        headers: jsonHeaders(ADMIN),
+        body: JSON.stringify({ path, content, author: "t" }),
+      })
+    ).json();
+  const del = (id: string, token = ADMIN) =>
+    fetch(`${base}/documents/${id}`, { method: "DELETE", headers: bearer(token) });
+  const mkToken = async (name: string, role: string) =>
+    (
+      await (
+        await fetch(`${base}/tokens`, { method: "POST", headers: jsonHeaders(ADMIN), body: JSON.stringify({ name, role }) })
+      ).json()
+    ).token;
+
+  beforeAll(async () => {
+    ({ base, cleanup, vault } = spawnServer(4506, { FORGE_TOKEN: ADMIN }));
+    await waitHealth(base);
+    viewer = await mkToken("v", "viewer");
+    editor = await mkToken("e", "editor");
+  });
+  afterAll(() => cleanup());
+
+  test("restore trae el doc de vuelta (deleted=0, .md reescrito, seq nuevo, change restore)", async () => {
+    const doc = await create("restore-me.md", "hola");
+    expect((await del(doc.id)).status).toBe(200);
+    // está en la papelera y su .md ya no está en disco
+    const trash = (await (await fetch(`${base}/trash`, { headers: bearer(ADMIN) })).json()).trash;
+    expect(trash.map((t: any) => t.id)).toContain(doc.id);
+    expect(existsSync(join(vault, "default", "restore-me.md"))).toBe(false);
+
+    const r = await fetch(`${base}/documents/${doc.id}/restore`, { method: "POST", headers: bearer(ADMIN) });
+    expect(r.status).toBe(200);
+    const restored = await r.json();
+    expect(restored.deleted).toBe(0);
+    expect(restored.content).toBe("hola");
+    expect(restored.seq).toBeGreaterThan(doc.seq);
+    expect(existsSync(join(vault, "default", "restore-me.md"))).toBe(true);
+
+    const trash2 = (await (await fetch(`${base}/trash`, { headers: bearer(ADMIN) })).json()).trash;
+    expect(trash2.map((t: any) => t.id)).not.toContain(doc.id);
+    const { history } = await (await fetch(`${base}/documents/${doc.id}/history`, { headers: bearer(ADMIN) })).json();
+    expect(history[0].action).toBe("restore");
+  });
+
+  test("restore de doc inexistente → 404", async () => {
+    const r = await fetch(`${base}/documents/no-existe/restore`, { method: "POST", headers: bearer(ADMIN) });
+    expect(r.status).toBe(404);
+  });
+
+  test("borrado definitivo saca el doc de la papelera y ya no se restaura", async () => {
+    const doc = await create("purge-me.md");
+    await del(doc.id);
+    expect((await fetch(`${base}/trash/${doc.id}`, { method: "DELETE", headers: bearer(ADMIN) })).status).toBe(200);
+    const trash = (await (await fetch(`${base}/trash`, { headers: bearer(ADMIN) })).json()).trash;
+    expect(trash.map((t: any) => t.id)).not.toContain(doc.id);
+    expect((await fetch(`${base}/documents/${doc.id}/restore`, { method: "POST", headers: bearer(ADMIN) })).status).toBe(404);
+  });
+
+  test("permisos: viewer no restaura (403), editor no purga (403)", async () => {
+    const doc = await create("perm.md");
+    await del(doc.id);
+    expect((await fetch(`${base}/documents/${doc.id}/restore`, { method: "POST", headers: bearer(viewer) })).status).toBe(403);
+    expect((await fetch(`${base}/trash/${doc.id}`, { method: "DELETE", headers: bearer(editor) })).status).toBe(403);
+  });
+});
+
+describe("guardia anti-vaciado (circuit breaker)", () => {
+  let base: string;
+  let cleanup: () => void;
+
+  const create = async (path: string) =>
+    await (
+      await fetch(`${base}/documents`, { method: "POST", headers: jsonHeaders(ADMIN), body: JSON.stringify({ path, content: "x" }) })
+    ).json();
+
+  beforeAll(async () => {
+    ({ base, cleanup } = spawnServer(4507, { FORGE_TOKEN: ADMIN, FORGE_DELETE_LIMIT: "3", FORGE_DELETE_WINDOW: "60" }));
+    await waitHealth(base);
+  });
+  afterAll(() => cleanup());
+
+  test("tras superar el umbral el delete → 429; x-confirm-bulk lo saltea", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) ids.push((await create(`b${i}.md`)).id);
+
+    for (let i = 0; i < 3; i++) {
+      expect((await fetch(`${base}/documents/${ids[i]}`, { method: "DELETE", headers: bearer(ADMIN) })).status).toBe(200);
+    }
+    const tripped = await fetch(`${base}/documents/${ids[3]}`, { method: "DELETE", headers: bearer(ADMIN) });
+    expect(tripped.status).toBe(429);
+    expect((await tripped.json()).code).toBe("bulk_delete_guard");
+
+    const bypass = await fetch(`${base}/documents/${ids[3]}`, {
+      method: "DELETE",
+      headers: { ...bearer(ADMIN), "x-confirm-bulk": "true" },
+    });
+    expect(bypass.status).toBe(200);
+  });
+});

@@ -2,6 +2,9 @@ import {
   createDoc,
   updateDoc,
   deleteDoc,
+  listTrash,
+  restoreDoc,
+  purgeDoc,
   syncSince,
   getLastSeq,
   getHistory,
@@ -12,6 +15,7 @@ import {
   ConflictError,
   NotFoundError,
 } from "./db";
+import { canDelete, recordDelete, recentDeletes, DELETE_LIMIT } from "./guard";
 import { addClient, broadcastChange, clientCount } from "./events";
 import { searchDocs } from "./search";
 import { ensureVaultDir, isValidSlug } from "./vault";
@@ -33,7 +37,7 @@ const PORT = Number(process.env.PORT ?? 4321);
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Author, X-Confirm-Bulk",
 };
 
 function json(data: unknown, status = 200, extra: Record<string, string> = {}) {
@@ -177,6 +181,23 @@ const server = Bun.serve({
       return json({ results: searchDocs(vault, q) });
     }
 
+    // --- Papelera: GET /trash (listar) ---
+    if (pathname === "/trash" && req.method === "GET") {
+      return json({ trash: listTrash(vault) });
+    }
+
+    // --- Papelera: DELETE /trash/:id (borrado físico, admin) ---
+    const trashMatch = pathname.match(/^\/trash\/([^/]+)$/);
+    if (trashMatch && req.method === "DELETE") {
+      try {
+        purgeDoc(vault, decodeURIComponent(trashMatch[1]));
+        return json({ ok: true });
+      } catch (e) {
+        if (e instanceof NotFoundError) return json({ error: e.message }, 404);
+        return json({ error: String(e) }, 400);
+      }
+    }
+
     // --- SSE: GET /events ---
     if (pathname === "/events" && req.method === "GET") {
       let cleanup = () => {};
@@ -249,6 +270,19 @@ const server = Bun.serve({
       return json({ seq: Number(verMatch[2]), content });
     }
 
+    // --- Restaurar: POST /documents/:id/restore ---
+    const restoreMatch = pathname.match(/^\/documents\/([^/]+)\/restore$/);
+    if (restoreMatch && req.method === "POST") {
+      try {
+        const doc = restoreDoc(vault, decodeURIComponent(restoreMatch[1]), req.headers.get("x-author"));
+        broadcastChange(vault, doc.seq);
+        return json(doc);
+      } catch (e) {
+        if (e instanceof NotFoundError) return json({ error: e.message }, 404);
+        return json({ error: String(e) }, 400);
+      }
+    }
+
     // --- Update / Delete sobre /documents/:id ---
     const docMatch = pathname.match(/^\/documents\/([^/]+)$/);
     if (docMatch) {
@@ -279,8 +313,18 @@ const server = Bun.serve({
       }
 
       if (req.method === "DELETE") {
+        // Guardia anti-vaciado: si hay un borrado masivo en curso, frenar hasta
+        // que el cliente reconfirme con x-confirm-bulk.
+        const confirmBulk = req.headers.get("x-confirm-bulk") === "true";
+        if (!confirmBulk && !canDelete(vault)) {
+          return json(
+            { error: "bulk delete guard tripped", code: "bulk_delete_guard", recent: recentDeletes(vault), limit: DELETE_LIMIT },
+            429,
+          );
+        }
         try {
           const doc = deleteDoc(vault, id, req.headers.get("x-author"));
+          recordDelete(vault);
           broadcastChange(vault, doc.seq);
           return json(doc);
         } catch (e) {

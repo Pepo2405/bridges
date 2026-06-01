@@ -43,6 +43,7 @@ export type Session = {
   online: boolean; // el server REST es alcanzable (independiente del SSE)
   pending: number; // cambios locales en cola sin sincronizar
   conflicts: SyncConflict[]; // conflictos de sync pendientes de resolución manual
+  bulkGuard: { count: number } | null; // guardia anti-vaciado disparada: borrados en cola a confirmar
   syncing: boolean;
   ready: boolean; // vault elegido + primer pull hecho
   perms: { write: boolean; delete: boolean }; // permisos del token actual (gatea la UI)
@@ -74,6 +75,7 @@ type SessionRuntime = {
   api: ForgeApi;
   index: idx.IndexHandle;
   flushing: boolean;
+  bulkConfirmed: boolean; // el usuario destrabó la guardia: los deletes en cola van con bypass
   unsubscribe: (() => void) | null; // cleanup del SSE (browser); null en Tauri
   unwatch: (() => void) | null; // cleanup del watcher (browser); null en Tauri
   debounce: Map<string, ReturnType<typeof setTimeout>>;
@@ -128,6 +130,7 @@ function freshSession(vault: string, serverUrl: string): Session {
     online: true,
     pending: 0,
     conflicts: [],
+    bulkGuard: null,
     syncing: false,
     ready: false,
     perms: { write: true, delete: true },
@@ -187,6 +190,11 @@ async function applyDocs(rt: SessionRuntime, docs: Doc[]) {
   await persistIndex(rt);
 }
 
+/** ¿El error es la guardia anti-vaciado del server (429)? */
+function isBulkGuard(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 429;
+}
+
 /** Mensaje legible para un error de auth (token inválido / sin permiso). */
 function authMessage(e: unknown, action: string): string | null {
   if (!(e instanceof ApiError)) return null;
@@ -240,6 +248,11 @@ const blankEntry = (): idx.IndexEntry => ({
 async function persistIndex(rt: SessionRuntime) {
   await rt.index.persist();
   setState("sessions", rt.vault, "pending", rt.index.dirtyPaths().length);
+}
+
+/** Borrados en cola (entradas dirty marcadas como deleted). */
+function pendingDeletes(rt: SessionRuntime): number {
+  return rt.index.dirtyPaths().filter((p) => rt.index.getEntry(p)?.deleted).length;
 }
 
 /** Marca un doc como borrado local pendiente de pushear. */
@@ -311,7 +324,7 @@ async function pushOne(rt: SessionRuntime, path: string): Promise<boolean> {
   try {
     if (entry.deleted) {
       if (entry.id) {
-        const doc = await rt.api.remove(entry.id, author);
+        const doc = await rt.api.remove(entry.id, author, rt.bulkConfirmed);
         setState("sessions", rt.vault, "docs", entry.id, undefined!);
         bumpSeq(rt, doc.seq);
       }
@@ -369,6 +382,12 @@ async function pushOne(rt: SessionRuntime, path: string): Promise<boolean> {
     bumpSeq(rt, res.doc.seq);
     return true;
   } catch (e) {
+    if (isBulkGuard(e)) {
+      // Guardia anti-vaciado: frenar el flush y pedir confirmación. Los deletes
+      // quedan en cola (no se pierden); se reintentan al confirmar.
+      setState("sessions", rt.vault, "bulkGuard", { count: pendingDeletes(rt) });
+      return false;
+    }
     const msg = authMessage(e, "sincronizar este vault");
     if (msg) {
       setNotice(msg);
@@ -612,6 +631,7 @@ export async function openSession(opts: { vault: string; serverUrl?: string; tok
     api,
     index,
     flushing: false,
+    bulkConfirmed: false,
     unsubscribe: null,
     unwatch: null,
     debounce: new Map(),
@@ -977,6 +997,16 @@ export async function saveDoc(
   return { ok: true, doc: res.doc };
 }
 
+/** Borra el .md local, lo saca del store y encola el DELETE para el próximo flush. */
+async function queueLocalDelete(rt: SessionRuntime, id: string) {
+  const target = state.sessions[rt.vault].docs[id];
+  if (!target) return;
+  await vaultRemove(rt.vault, target.path).catch(() => {});
+  setState("sessions", rt.vault, "docs", id, undefined!);
+  markDeleted(rt, target.path);
+  await persistIndex(rt);
+}
+
 export async function deleteDoc(id: string, author?: string) {
   const rt = activeRuntime();
   if (!rt) return;
@@ -984,27 +1014,72 @@ export async function deleteDoc(id: string, author?: string) {
   const who = author ?? sess.author;
   let doc: Doc;
   try {
-    doc = await rt.api.remove(id, who);
+    doc = await rt.api.remove(id, who, rt.bulkConfirmed);
   } catch (e) {
     const msg = authMessage(e, "borrar en este vault");
     if (msg) return setNotice(msg);
+    if (isBulkGuard(e)) {
+      // Guardia anti-vaciado: borrar local + encolar; pedir confirmación.
+      await queueLocalDelete(rt, id);
+      setState("sessions", rt.vault, "bulkGuard", { count: pendingDeletes(rt) });
+      return;
+    }
     if (e instanceof ApiError) throw e; // error del server (5xx): propagar
-
     // Red caída: borrar local + encolar el DELETE; se sincroniza al reconectar.
     setState("sessions", rt.vault, "online", false);
-    const target = sess.docs[id];
-    if (target) {
-      await vaultRemove(rt.vault, target.path).catch(() => {});
-      setState("sessions", rt.vault, "docs", id, undefined!);
-      markDeleted(rt, target.path);
-      await persistIndex(rt);
-    }
+    await queueLocalDelete(rt, id);
     return;
   }
   await applyDocs(rt, [doc]);
   if (doc.seq > state.sessions[rt.vault].lastSeq) {
     setState("sessions", rt.vault, "lastSeq", doc.seq);
     await stateSave(rt.vault, { last_seq: doc.seq, server_url: sess.serverUrl });
+  }
+}
+
+/** El usuario confirmó el borrado masivo: reintenta los deletes en cola con bypass. */
+export async function confirmBulkDelete(vault: string) {
+  const rt = runtimes.get(vault);
+  if (!rt) return;
+  setState("sessions", vault, "bulkGuard", null);
+  rt.bulkConfirmed = true;
+  try {
+    await flushQueue(rt);
+  } finally {
+    rt.bulkConfirmed = false;
+  }
+}
+
+/** El usuario canceló: los deletes quedan en cola (no se pierden) para investigar. */
+export function cancelBulkDelete(vault: string) {
+  setState("sessions", vault, "bulkGuard", null);
+}
+
+/** Restaura un doc de la papelera y lo refleja en el store + disco. */
+export async function restoreFromTrash(id: string): Promise<boolean> {
+  const rt = activeRuntime();
+  if (!rt) return false;
+  try {
+    const doc = await rt.api.restore(id, state.sessions[rt.vault].author);
+    await applyDocs(rt, [doc]); // lo trae de vuelta al árbol y al disco
+    bumpSeq(rt, doc.seq);
+    return true;
+  } catch (e) {
+    setNotice(authMessage(e, "restaurar en este vault") ?? `No se pudo restaurar: ${e}`);
+    return false;
+  }
+}
+
+/** Borra definitivamente un doc de la papelera (admin). */
+export async function purgeFromTrash(id: string): Promise<boolean> {
+  const api = activeApi();
+  if (!api) return false;
+  try {
+    await api.purge(id);
+    return true;
+  } catch (e) {
+    setNotice(authMessage(e, "borrar definitivamente en este vault") ?? `No se pudo borrar: ${e}`);
+    return false;
   }
 }
 

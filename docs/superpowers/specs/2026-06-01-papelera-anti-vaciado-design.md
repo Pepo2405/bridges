@@ -33,7 +33,7 @@ No se crea tabla nueva. Los borrados ya viven en `documents` con `deleted=1` y `
 | Método + ruta | Permiso (`permFor`) | Comportamiento |
 |---|---|---|
 | `GET /trash` | read (viewer+) | Lista docs con `deleted=1` del vault: `id, path, title, updated_by, updated_at, seq`. Sin `content` (listado liviano). |
-| `POST /documents/:id/restore` | write (editor+) | `deleted=1→0`, bump `seq`, reescribe el `.md` con el `content` guardado, registra change `action:"restore"`, `broadcastChange`. Si el `path` ya está ocupado por un doc vivo → 409 (`ConflictError`, mismo patrón que `updateDoc`). Si no existe o no está borrado → 404 / idempotente. |
+| `POST /documents/:id/restore` | write (editor+) | `deleted=1→0`, bump `seq`, reescribe el `.md` con el `content` guardado, registra change `action:"restore"`, `broadcastChange`. El path nunca colisiona: `UNIQUE(vault, path)` lo mantiene reservado mientras está borrado, así que ningún otro doc vivo puede ocuparlo. Si no existe o no es del vault → 404; si ya está vivo → idempotente. |
 | `DELETE /trash/:id` | delete (admin) | **Hard-delete**: borra la fila de `documents` y sus filas en `changes`. Sólo de a uno (no hay "vaciar todo"). 404 si no existe. |
 
 El mapeo método→permiso ya lo hace `permFor()` en `index.ts`: `DELETE→delete`, `POST→write`,
@@ -42,12 +42,14 @@ El mapeo método→permiso ya lo hace `permFor()` en `index.ts`: `DELETE→delet
 ### `restore` en `db.ts`
 
 Nuevo `db.transaction` espejando `deleteDoc`:
-1. `getDoc(id)`; validar `vault` y que esté `deleted=1`.
-2. Si el `path` original colisiona con un doc vivo (`getDocByPath`) → `ConflictError`.
-3. `seq = qNextSeq`; `UPDATE documents SET deleted=0, seq=?, updated_by=?, updated_at=?`.
-4. `qChange.run({ action: "restore", content: <content actual> })`.
-5. `writeDoc(vault, path, content)` para recrear el `.md`.
-6. return `getDoc(id)`.
+1. `getDoc(id)`; validar `vault`. Si ya está vivo → idempotente (devuelve el doc).
+2. `seq = qNextSeq`; `UPDATE documents SET deleted=0, version=version+1, seq=?, updated_by=?, updated_at=?`.
+3. `qChange.run({ action: "restore", content: <content actual> })`.
+4. `writeDoc(vault, path, content)` para recrear el `.md`.
+5. return `getDoc(id)`.
+
+(No hace falta chequear colisión de path: `UNIQUE(vault, path)` lo reserva mientras
+está borrado, así que ningún otro doc vivo puede haberlo tomado.)
 
 ### `purge` (hard-delete) en `db.ts`
 
@@ -105,7 +107,6 @@ En el flush de borrados (`pushOne` cuando `entry.deleted`): si `remove()` devuel
 
 ### Tests de server (`server/test/api.test.ts`)
 - restore trae el doc de vuelta: `deleted=0`, `.md` reescrito en disco, `seq` nuevo, change `restore`.
-- restore con `path` ocupado por doc vivo → 409.
 - restore de doc inexistente → 404.
 - hard-delete (`DELETE /trash/:id`) saca la fila de `documents` y `changes`.
 - breaker: tras `LIMIT` deletes dentro de la ventana, el siguiente → 429 `bulk_delete_guard`.

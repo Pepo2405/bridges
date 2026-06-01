@@ -16,6 +16,14 @@ export type Change = { seq: number; author: string | null; action: string; creat
 
 export type SyncResponse = { documents: Doc[]; last_seq: number };
 export type SearchHit = { id: string; path: string; title: string | null; snippet: string };
+export type TrashItem = {
+  id: string;
+  path: string;
+  title: string | null;
+  updated_by: string | null;
+  updated_at: string;
+  seq: number;
+};
 export type TokenInfo = { name: string; role: string; created_at: string };
 export type VaultInfo = { slug: string; name: string; last_seq: number; created_at: string };
 
@@ -173,13 +181,44 @@ export class ForgeApi {
     return { ok: true, doc: await r.json() };
   }
 
-  async remove(id: string, author?: string): Promise<Doc> {
+  /** Borra (soft) un doc. Si la guardia anti-vaciado dispara, tira ApiError 429;
+   *  reintentar con confirmBulk=true para destrabar. */
+  async remove(id: string, author?: string, confirmBulk = false): Promise<Doc> {
+    const extra: Record<string, string> = {};
+    if (author) extra["x-author"] = author;
+    if (confirmBulk) extra["x-confirm-bulk"] = "true";
     const r = await fetch(this.url(`/documents/${id}`), {
       method: "DELETE",
-      headers: this.headers(author ? { "x-author": author } : {}),
+      headers: this.headers(extra),
     });
     if (!r.ok) throw new ApiError(r.status, `delete ${r.status}`);
     return r.json();
+  }
+
+  /** Lista la papelera (docs borrados del vault). */
+  async trash(): Promise<TrashItem[]> {
+    const r = await fetch(this.url("/trash"), { headers: this.headers() });
+    if (!r.ok) throw new ApiError(r.status, `trash ${r.status}`);
+    return (await r.json()).trash;
+  }
+
+  /** Restaura un doc borrado. */
+  async restore(id: string, author?: string): Promise<Doc> {
+    const r = await fetch(this.url(`/documents/${encodeURIComponent(id)}/restore`), {
+      method: "POST",
+      headers: this.headers(author ? { "x-author": author } : {}),
+    });
+    if (!r.ok) throw new ApiError(r.status, `restore ${r.status}`);
+    return r.json();
+  }
+
+  /** Borra físicamente un doc de la papelera (admin). */
+  async purge(id: string): Promise<void> {
+    const r = await fetch(this.url(`/trash/${encodeURIComponent(id)}`), {
+      method: "DELETE",
+      headers: this.headers(),
+    });
+    if (!r.ok) throw new ApiError(r.status, `purge ${r.status}`);
   }
 
   /** Se suscribe a /events. Llama onChange(seq) por cada evento de cambio. Devuelve un cleanup. */
