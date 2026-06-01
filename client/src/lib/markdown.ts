@@ -35,8 +35,16 @@ const wikilink: TokenizerAndRendererExtension = {
 
 marked.use({ extensions: [wikilink] });
 
+// Frontmatter YAML al inicio del doc (--- ... ---). Como Obsidian, no se
+// renderiza en el preview; marked lo mostraría como basura (hr + heading).
+const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+
+export function stripFrontmatter(md: string): string {
+  return md.replace(FRONTMATTER, "");
+}
+
 export function renderMarkdown(md: string): string {
-  return marked.parse(md) as string;
+  return marked.parse(stripFrontmatter(md)) as string;
 }
 
 export type TreeNode = {
