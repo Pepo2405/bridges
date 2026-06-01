@@ -1,8 +1,8 @@
 [package]
 name = "forge-client"
 version = "0.1.0"
-description = "Forge — vault de documentación compartido"
-authors = ["Forge"]
+description = "Bridges — vault de documentación compartido"
+authors = ["Bridges"]
 edition = "2021"
 
 [lib]

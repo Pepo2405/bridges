@@ -427,12 +427,12 @@ pub fn run() {
         ])
         .setup(|app| {
             // System tray: menú Mostrar / Salir + click en el ícono para reabrir.
-            let show = MenuItem::with_id(app, "show", "Mostrar Forge", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Mostrar Bridges", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Forge")
+                .tooltip("Bridges")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -463,5 +463,5 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error al arrancar Forge");
+        .expect("error al arrancar Bridges");
 }

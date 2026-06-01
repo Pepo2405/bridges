@@ -8,7 +8,6 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
-  Hammer,
   Eye,
   Pencil,
   Network,
@@ -59,6 +58,7 @@ import { ConfirmHost } from "~/components/ConfirmHost";
 import { CommandPalette, type Command } from "~/components/CommandPalette";
 import { HistoryDialog } from "~/components/HistoryDialog";
 import { AddVaultDialog } from "~/components/AddVaultDialog";
+import { WebIcon } from "~/components/WebIcon";
 import { relativeTime } from "~/lib/time";
 import {
   DropdownMenu,
@@ -162,7 +162,7 @@ const Gated: Component<ParentProps<{ when: boolean; reason: string }>> = (props)
 
 const BootSplash: Component = () => (
   <div class="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
-    <Hammer class="h-7 w-7 text-primary" />
+    <WebIcon class="h-7 w-7 text-primary" />
     <RefreshCw class="h-4 w-4 animate-spin" />
     <span class="text-sm">Conectando…</span>
   </div>
@@ -203,8 +203,8 @@ const ConnectionManager: Component<{ onAddVault: () => void }> = (props) => {
     <div class="flex h-full items-center justify-center p-6">
       <div class="w-full max-w-md rounded-lg border bg-card p-6 shadow-sm">
         <div class="mb-1 flex items-center gap-2">
-          <Hammer class="h-5 w-5 text-primary" />
-          <h1 class="text-2xl font-semibold">Forge</h1>
+          <WebIcon class="h-5 w-5 text-primary" />
+          <h1 class="text-2xl font-semibold">Bridges</h1>
         </div>
         <p class="mb-5 text-sm text-muted-foreground">
           {browserMode()
@@ -258,7 +258,7 @@ const ConnectionManager: Component<{ onAddVault: () => void }> = (props) => {
         <Show when={!browserMode()}>
           <label class="mt-4 flex cursor-pointer items-center gap-2 border-t pt-4 text-sm text-muted-foreground">
             <input type="checkbox" class="h-4 w-4 accent-primary" checked={autostart()} onChange={toggleAutostart} />
-            Iniciar Forge automáticamente al iniciar sesión
+            Iniciar Bridges automáticamente al iniciar sesión
           </label>
         </Show>
       </div>
@@ -692,8 +692,8 @@ const App: Component = () => {
         {/* Topbar */}
         <header class="flex h-12 shrink-0 items-center gap-3 border-b px-3">
           <div class="flex items-center gap-1.5">
-            <Hammer class="h-4 w-4 text-primary" />
-            <span class="text-sm font-semibold">Forge</span>
+            <WebIcon class="h-4 w-4 text-primary" />
+            <span class="text-sm font-semibold">Bridges</span>
           </div>
           <Show when={browserMode()}>
             <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-500">modo browser</span>
