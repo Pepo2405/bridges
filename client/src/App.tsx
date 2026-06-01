@@ -43,7 +43,7 @@ import {
   resolveConflictKeepMine,
   resolveConflictKeepServer,
 } from "~/lib/store";
-import { buildTree, renderMarkdown, setWikiResolver } from "~/lib/markdown";
+import { buildTree, renderMarkdown, setWikiResolver, parseFrontmatter } from "~/lib/markdown";
 import { buildBacklinks, createResolver, displayName } from "~/lib/links";
 import type { Doc, SearchHit } from "~/lib/api";
 import { FileTree, type TreeAction } from "~/components/FileTree";
@@ -607,6 +607,9 @@ const App: Component = () => {
     return renderMarkdown(draft());
   });
 
+  // Frontmatter de la nota actual, mostrado como panel de propiedades (como Obsidian).
+  const properties = createMemo(() => parseFrontmatter(draft()));
+
   // Encabezados de la nota actual para el outline (ignora bloques de código).
   const outline = createMemo(() => {
     const out: { level: number; text: string; line: number }[] = [];
@@ -621,9 +624,16 @@ const App: Component = () => {
     return out;
   });
 
-  // Click en un [[wikilink]] del preview navega a la nota destino.
+  // Click en el preview: un #tag busca por ese tag; un [[wikilink]] navega a la nota.
   const onPreviewClick = (e: MouseEvent) => {
-    const el = (e.target as HTMLElement).closest("[data-doc-id]");
+    const target = e.target as HTMLElement;
+    const tagEl = target.closest("[data-tag]");
+    if (tagEl) {
+      e.preventDefault();
+      onSearch("#" + tagEl.getAttribute("data-tag"));
+      return;
+    }
+    const el = target.closest("[data-doc-id]");
     const id = el?.getAttribute("data-doc-id");
     if (id) {
       e.preventDefault();
@@ -977,11 +987,38 @@ const App: Component = () => {
                       when={mode() === "edit"}
                       fallback={
                         <div class="min-h-0 flex-1 overflow-auto">
-                          <div
-                            class="prose-forge mx-auto max-w-3xl px-5 py-7"
-                            innerHTML={preview()}
-                            onClick={onPreviewClick}
-                          />
+                          <div class="mx-auto max-w-3xl px-5 py-7">
+                            <Show when={properties().length}>
+                              <div class="note-properties">
+                                <For each={properties()}>
+                                  {(p) => (
+                                    <div class="note-prop">
+                                      <span class="note-prop-key">{p.key}</span>
+                                      <div class="note-prop-val">
+                                        <Show
+                                          when={Array.isArray(p.value)}
+                                          fallback={<span>{p.value as string}</span>}
+                                        >
+                                          <For each={p.value as string[]}>
+                                            {(v) =>
+                                              p.key === "tags" ? (
+                                                <a class="tag" onClick={() => onSearch("#" + v)}>
+                                                  #{v}
+                                                </a>
+                                              ) : (
+                                                <span class="note-prop-item">{v}</span>
+                                              )
+                                            }
+                                          </For>
+                                        </Show>
+                                      </div>
+                                    </div>
+                                  )}
+                                </For>
+                              </div>
+                            </Show>
+                            <div class="prose-forge" innerHTML={preview()} onClick={onPreviewClick} />
+                          </div>
                         </div>
                       }
                     >

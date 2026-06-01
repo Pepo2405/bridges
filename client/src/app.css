@@ -92,3 +92,31 @@
 .prose-forge table { border-collapse: collapse; margin: 0.7em 0; }
 .prose-forge th, .prose-forge td { border: 1px solid hsl(var(--border)); padding: 0.4em 0.7em; }
 .prose-forge hr { border: none; border-top: 1px solid hsl(var(--border)); margin: 1em 0; }
+
+/* #tags como pills clicleables (preview + panel de propiedades). */
+.tag {
+  display: inline-block;
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+  border-radius: 9999px;
+  padding: 0.05em 0.6em;
+  font-size: 0.82em;
+  line-height: 1.6;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tag:hover { background: hsl(var(--primary) / 0.22); text-decoration: none; }
+
+/* Panel de propiedades del frontmatter (estilo Obsidian Properties). */
+.note-properties {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--muted) / 0.4);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+}
+.note-prop { display: flex; gap: 0.75rem; padding: 0.2rem 0; align-items: baseline; }
+.note-prop-key { color: hsl(var(--muted-foreground)); min-width: 5.5rem; text-transform: capitalize; }
+.note-prop-val { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }

@@ -33,14 +33,61 @@ const wikilink: TokenizerAndRendererExtension = {
   },
 };
 
-marked.use({ extensions: [wikilink] });
+// #tag inline -> pill clicleable (como Obsidian). Debe empezar con letra para no
+// agarrar `#123` ni colores hex (que igual van entre backticks → inline code). Los
+// `#` de headings son block-level y no llegan acá; los de `[[a#b]]` los come wikilink.
+const tag: TokenizerAndRendererExtension = {
+  name: "tag",
+  level: "inline",
+  start(src) {
+    const i = src.indexOf("#");
+    return i < 0 ? undefined : i;
+  },
+  tokenizer(src) {
+    const m = /^#([A-Za-z][\w/-]*)/.exec(src);
+    if (m) return { type: "tag", raw: m[0], text: m[1] };
+  },
+  renderer(token) {
+    const name = escapeHtml((token as unknown as { text: string }).text);
+    return `<a class="tag" data-tag="${name}">#${name}</a>`;
+  },
+};
+
+marked.use({ extensions: [wikilink, tag] });
 
 // Frontmatter YAML al inicio del doc (--- ... ---). Como Obsidian, no se
 // renderiza en el preview; marked lo mostraría como basura (hr + heading).
-const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
 export function stripFrontmatter(md: string): string {
   return md.replace(FRONTMATTER, "");
+}
+
+export type Property = { key: string; value: string | string[] };
+
+// Parser mínimo del frontmatter: escalares (`key: val`) y arrays inline
+// (`key: [a, b]`). Suficiente para lo que usamos; no es un YAML completo.
+export function parseFrontmatter(md: string): Property[] {
+  const m = FRONTMATTER.exec(md);
+  if (!m) return [];
+  const out: Property[] = [];
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(line.trim());
+    if (!kv) continue;
+    const [, key, rawVal] = kv;
+    const val = rawVal.trim();
+    if (val.startsWith("[") && val.endsWith("]")) {
+      const items = val
+        .slice(1, -1)
+        .split(",")
+        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+        .filter(Boolean);
+      out.push({ key, value: items });
+    } else if (val) {
+      out.push({ key, value: val.replace(/^["']|["']$/g, "") });
+    }
+  }
+  return out;
 }
 
 export function renderMarkdown(md: string): string {
