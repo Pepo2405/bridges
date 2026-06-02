@@ -39,6 +39,8 @@ La fuente de verdad son **archivos `.md` en disco**. El servidor mantiene la cop
 - **Sync bidireccional** (`notify` en Rust + watcher en `store.ts`): ediciones externas (Zed, Claude Code) vuelven al server. Echo evitado por comparación de contenido.
 - **Conexiones guardadas + autoconexión** (`config_load`/`config_save` → `forge.json` en el config dir): abre el último vault solo; gestor para cambiar/agregar.
 - **Operaciones de archivos** en el árbol (⋮ / click derecho): renombrar/mover, eliminar, nueva nota en carpeta, renombrar/eliminar carpeta.
+- **Búsqueda full-text con ranking BM25** (SQLite FTS5): índice external-content sobre `documents` (title/path/content) mantenido por triggers, insensible a acentos. Reemplaza el `LIKE` plano, que ni rankeaba ni escalaba.
+- **MCP server** (`mcp/`): expone `search_vault` para que Claude Code busque rankeado en vez de grepear el vault. Ver `mcp/README.md`.
 - Color primary `#FF0033`.
 
 ### Decisiones de sync (importantes)
@@ -52,7 +54,7 @@ La fuente de verdad son **archivos `.md` en disco**. El servidor mantiene la cop
 ### Próximos pasos (backlog)
 
 - Editor con CodeMirror (syntax highlight, autocompletado de `[[wikilinks]]`).
-- MCP server sobre el índice para búsqueda semántica desde Claude Code.
+- Búsqueda **semántica** (embeddings) como complemento del FTS5 léxico, para matchear sinónimos/paráfrasis que BM25 no alcanza.
 - **Firma + notarización** del `.dmg` (Apple Developer ID) para distribuir sin warnings de Gatekeeper. Hoy sale con firma ad-hoc.
 - **Firma/notarización** en el pipeline de release (hoy los instaladores salen sin firmar; ver [Descargas](#descargas-instaladores)).
 - **Protección contra vaciado**: hoy un `editor` no puede borrar (`DELETE` es admin), pero sí puede sobreescribir el contenido de una nota con vacío vía update — no hay historial de versiones. Una papelera/versionado lo cubriría.
@@ -160,7 +162,7 @@ bun run tauri build --target universal-apple-darwin
 | `GET`  | `/health` | estado + `last_seq` |
 | `GET`  | `/sync?since=<seq>` | pull incremental de docs cambiados |
 | `GET`  | `/events` | stream SSE (`{type:"change",seq}`) |
-| `GET`  | `/search?q=<texto>` | búsqueda full-text básica |
+| `GET`  | `/search?q=<texto>` | búsqueda full-text con ranking BM25 (FTS5) |
 | `POST` | `/documents` | crear (`{path,title?,content}`) → 201 |
 | `POST` | `/documents/:id` | actualizar (`{path,content,base_version}`) → 200 / 409 |
 | `DELETE` | `/documents/:id` | borrado lógico (propaga `deleted=1`) |

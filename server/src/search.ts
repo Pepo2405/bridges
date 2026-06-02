@@ -7,34 +7,39 @@ export type SearchHit = {
   snippet: string;
 };
 
+// Búsqueda full-text con FTS5. Columnas indexadas: title, path, content.
+// Ranking BM25 con pesos title=10, path=5, content=1 (un match en el título
+// pesa más). snippet() saca el fragmento más relevante de content (col idx 2)
+// con elipsis en los bordes.
 const qSearch = db.query<
-  { id: string; path: string; title: string | null; content: string },
-  [string, string, string, string]
+  { id: string; path: string; title: string | null; snippet: string },
+  [string, string]
 >(
-  `SELECT id, path, title, content FROM documents
-   WHERE vault = ?4 AND deleted = 0 AND (title LIKE ?1 OR path LIKE ?2 OR content LIKE ?3)
-   ORDER BY (title LIKE ?1) DESC, path ASC
+  `SELECT d.id, d.path, d.title,
+          snippet(documents_fts, 2, '', '', '…', 12) AS snippet
+   FROM documents_fts
+   JOIN documents d ON d.rowid = documents_fts.rowid
+   WHERE documents_fts MATCH ?1 AND d.vault = ?2 AND d.deleted = 0
+   ORDER BY bm25(documents_fts, 10.0, 5.0, 1.0)
    LIMIT 50`,
 );
 
-/** Búsqueda full-text básica (LIKE case-insensitive) sobre el índice de un vault. */
-export function searchDocs(vault: string, query: string): SearchHit[] {
-  const q = query.trim();
-  if (!q) return [];
-  const like = `%${q.replace(/[%_]/g, (m) => "\\" + m)}%`;
-  const rows = qSearch.all(like, like, like, vault);
-  return rows.map((r) => ({
-    id: r.id,
-    path: r.path,
-    title: r.title,
-    snippet: makeSnippet(r.content, q),
-  }));
+/**
+ * Convierte el texto libre del usuario en una query MATCH segura de FTS5.
+ * Tokeniza por letras/números (descarta la sintaxis especial de FTS5: comillas,
+ * `*`, `:`, `AND/OR/NOT`, etc.), envuelve cada token en comillas y le agrega `*`
+ * para prefix-match (búsqueda mientras se tipea). AND implícito entre tokens.
+ * Devuelve "" si no quedan tokens.
+ */
+function toMatchQuery(query: string): string {
+  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu);
+  if (!tokens?.length) return "";
+  return tokens.map((t) => `"${t}"*`).join(" ");
 }
 
-function makeSnippet(content: string, query: string): string {
-  const idx = content.toLowerCase().indexOf(query.toLowerCase());
-  if (idx === -1) return content.slice(0, 120).replace(/\s+/g, " ").trim();
-  const start = Math.max(0, idx - 40);
-  const end = Math.min(content.length, idx + query.length + 80);
-  return (start > 0 ? "…" : "") + content.slice(start, end).replace(/\s+/g, " ").trim() + (end < content.length ? "…" : "");
+/** Búsqueda full-text (FTS5/BM25) sobre el índice de un vault. */
+export function searchDocs(vault: string, query: string): SearchHit[] {
+  const match = toMatchQuery(query);
+  if (!match) return [];
+  return qSearch.all(match, vault);
 }

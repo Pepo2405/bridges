@@ -68,6 +68,36 @@ db.exec(`
     VALUES ('default', 'default', 0, '${new Date().toISOString()}');
 `);
 
+// --- Índice full-text (FTS5) ---
+// Tabla external-content: NO duplica el texto, indexa title/path/content leyendo
+// de `documents` por rowid (evita el ~2x de tamaño de un FTS5 standalone). Los
+// triggers la mantienen en sync sin tocar las funciones de escritura de abajo.
+// El filtro deleted=0 se aplica al consultar (search.ts), no acá: los borrados
+// quedan indexados pero no se devuelven. unicode61 + remove_diacritics: matchea
+// "mitocondria" buscando "mitocondría", etc.
+const ftsExisted =
+  db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='documents_fts'").get() != null;
+db.exec(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+    title, path, content,
+    content='documents', content_rowid='rowid',
+    tokenize="unicode61 remove_diacritics 2"
+  );
+
+  CREATE TRIGGER IF NOT EXISTS documents_fts_ai AFTER INSERT ON documents BEGIN
+    INSERT INTO documents_fts(rowid, title, path, content) VALUES (new.rowid, new.title, new.path, new.content);
+  END;
+  CREATE TRIGGER IF NOT EXISTS documents_fts_ad AFTER DELETE ON documents BEGIN
+    INSERT INTO documents_fts(documents_fts, rowid, title, path, content) VALUES ('delete', old.rowid, old.title, old.path, old.content);
+  END;
+  CREATE TRIGGER IF NOT EXISTS documents_fts_au AFTER UPDATE ON documents BEGIN
+    INSERT INTO documents_fts(documents_fts, rowid, title, path, content) VALUES ('delete', old.rowid, old.title, old.path, old.content);
+    INSERT INTO documents_fts(rowid, title, path, content) VALUES (new.rowid, new.title, new.path, new.content);
+  END;
+`);
+// Backfill al crearla por primera vez (DBs con docs preexistentes).
+if (!ftsExisted) db.exec("INSERT INTO documents_fts(documents_fts) VALUES ('rebuild');");
+
 export type Vault = { slug: string; name: string; last_seq: number; created_at: string };
 
 export type Doc = {

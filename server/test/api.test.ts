@@ -518,6 +518,72 @@ describe("server sin auth", () => {
   });
 });
 
+describe("búsqueda FTS5 (ranking, snippets, borrados)", () => {
+  let base: string;
+  let cleanup: () => void;
+
+  const post = (path: string, content: string) =>
+    fetch(`${base}/documents`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ path, content }) });
+  const search = async (q: string) =>
+    (await (await fetch(`${base}/search?q=${encodeURIComponent(q)}`)).json()).results as {
+      path: string;
+      title: string | null;
+      snippet: string;
+    }[];
+
+  beforeAll(async () => {
+    ({ base, cleanup } = spawnServer(4503));
+    await waitHealth(base);
+    await post("relevante.md", "# Kubernetes\nkubernetes kubernetes kubernetes cluster deployment namespace");
+    await post("incidental.md", "# Notas varias\nuna mención de kubernetes al pasar, nada más");
+    await post("acentos.md", "# Biología\nla mitocondría produce energía en la célula");
+    await post("ruido.md", "# Otro\ntexto sin relación alguna con el resto");
+  });
+  afterAll(() => cleanup());
+
+  test("BM25 rankea el doc relevante por encima de la mención incidental", async () => {
+    const hits = await search("kubernetes");
+    const paths = hits.map((h) => h.path);
+    expect(paths).toContain("relevante.md");
+    expect(paths).toContain("incidental.md");
+    expect(paths.indexOf("relevante.md")).toBeLessThan(paths.indexOf("incidental.md"));
+  });
+
+  test("el snippet contiene el término buscado", async () => {
+    const [top] = await search("kubernetes");
+    expect(top.snippet.toLowerCase()).toContain("kubernetes");
+  });
+
+  test("prefix match: 'kuber' encuentra 'kubernetes'", async () => {
+    expect((await search("kuber")).map((h) => h.path)).toContain("relevante.md");
+  });
+
+  test("insensible a acentos: 'mitocondria' encuentra 'mitocondría'", async () => {
+    expect((await search("mitocondria")).map((h) => h.path)).toContain("acentos.md");
+  });
+
+  test("los borrados quedan fuera de la búsqueda", async () => {
+    const doc = await (await post("efimero.md", "# Efímero\ncontenido kubernetes borrable")).json();
+    expect((await search("efímero")).map((h) => h.path)).toContain("efimero.md");
+    expect((await fetch(`${base}/documents/${doc.id}`, { method: "DELETE", headers: jsonHeaders() })).status).toBe(200);
+    expect((await search("efímero")).map((h) => h.path)).not.toContain("efimero.md");
+  });
+
+  test("query vacía o sin tokens → sin resultados, sin error", async () => {
+    expect(await search("")).toEqual([]);
+    expect(await search("   ")).toEqual([]);
+    expect(await search('"')).toEqual([]);
+  });
+
+  test("caracteres especiales de FTS5 no rompen la query", async () => {
+    for (const q of ["foo:bar", "AND OR NOT", "a* b(c)", '"quoted"', "kubernetes -cluster"]) {
+      const r = await fetch(`${base}/search?q=${encodeURIComponent(q)}`);
+      expect(r.status).toBe(200);
+      expect(Array.isArray((await r.json()).results)).toBe(true);
+    }
+  });
+});
+
 describe("papelera: restaurar y borrado definitivo", () => {
   let base: string;
   let cleanup: () => void;
