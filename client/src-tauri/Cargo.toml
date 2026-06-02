@@ -1,12 +1,12 @@
 [package]
-name = "forge-client"
+name = "bridges-client"
 version = "0.1.0"
 description = "Bridges — vault de documentación compartido"
 authors = ["Bridges"]
 edition = "2021"
 
 [lib]
-name = "forge_client_lib"
+name = "bridges_client_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

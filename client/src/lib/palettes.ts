@@ -1,4 +1,4 @@
-// Paletas de color de Forge. Cada paleta define los valores de las variables CSS
+// Paletas de color de Bridges. Cada paleta define los valores de las variables CSS
 // de shadcn (formato "H S% L%") para los modos claro y oscuro. La lógica de
 // aplicación/persistencia vive en lib/theme.ts; acá solo hay data.
 
@@ -54,11 +54,11 @@ export const EDITABLE_TOKENS: { key: TokenKey; label: string }[] = [
   { key: "ring", label: "Foco (ring)" },
 ];
 
-// forge: replica EXACTAMENTE app.css (:root y .dark). Es el default; si se cambian
+// bridges: replica EXACTAMENTE app.css (:root y .dark). Es el default; si se cambian
 // los valores base en app.css, actualizar también acá para que coincidan.
-const forge: Palette = {
-  id: "forge",
-  name: "Forge",
+const bridges: Palette = {
+  id: "bridges",
+  name: "Bridges",
   builtin: true,
   light: {
     background: "0 0% 100%",
@@ -299,5 +299,5 @@ const nenufar: Palette = {
   },
 };
 
-export const BUILTIN_PALETTES: Palette[] = [forge, nord, solarized, rosePine, nenufar];
-export const DEFAULT_PALETTE_ID = "forge";
+export const BUILTIN_PALETTES: Palette[] = [bridges, nord, solarized, rosePine, nenufar];
+export const DEFAULT_PALETTE_ID = "bridges";

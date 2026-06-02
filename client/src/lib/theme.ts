@@ -8,10 +8,10 @@ import {
 
 export type Mode = "light" | "dark" | "system";
 
-const MODE_KEY = "forge.theme.mode";
-const PALETTE_KEY = "forge.theme.palette";
-const CUSTOM_KEY = "forge.themes.custom";
-const LEGACY_KEY = "forge.theme"; // valor viejo: "light" | "dark"
+const MODE_KEY = "bridges.theme.mode";
+const PALETTE_KEY = "bridges.theme.palette";
+const CUSTOM_KEY = "bridges.themes.custom";
+const LEGACY_KEY = "bridges.theme"; // valor viejo: "light" | "dark"
 
 const mql = window.matchMedia?.("(prefers-color-scheme: dark)");
 
@@ -74,10 +74,10 @@ function applyPalette() {
   // (0,1,0) que Tailwind emite desde app.css, así que ganan sin depender del orden de inyección.
   // El bloque dark va segundo: cuando la clase .dark está activa, desempata a su favor.
   const css = `html:root{${decls(p.light)}}html.dark{${decls(p.dark)}}`;
-  let el = document.getElementById("forge-palette") as HTMLStyleElement | null;
+  let el = document.getElementById("bridges-palette") as HTMLStyleElement | null;
   if (!el) {
     el = document.createElement("style");
-    el.id = "forge-palette";
+    el.id = "bridges-palette";
     document.head.appendChild(el);
   }
   el.textContent = css;

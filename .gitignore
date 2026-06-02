@@ -11,6 +11,10 @@ server/forge.db
 server/forge.db-wal
 server/forge.db-shm
 server/forge.db.bak-*
+server/bridges.db
+server/bridges.db-wal
+server/bridges.db-shm
+server/bridges.db.bak-*
 server/vault/
 
 # misc

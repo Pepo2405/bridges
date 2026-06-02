@@ -1,10 +1,10 @@
 {
-  "name": "forge-mcp",
+  "name": "bridges-mcp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "forge-mcp": "src/index.ts"
+    "bridges-mcp": "src/index.ts"
   },
   "scripts": {
     "start": "bun run src/index.ts"

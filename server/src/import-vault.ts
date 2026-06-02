@@ -1,12 +1,12 @@
-// Importa todos los .md de un vault de Obsidian al server Forge vía la API.
+// Importa todos los .md de un vault de Obsidian al server Bridges vía la API.
 // Uso: bun run src/import-vault.ts "/ruta/al/vault" [http://localhost:4321] [--token <tok>]
-// El vault destino sale del token (--token o env FORGE_TOKEN).
+// El vault destino sale del token (--token o env BRIDGES_TOKEN).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const args = process.argv.slice(2);
 const tokIdx = args.indexOf("--token");
-const TOKEN = (tokIdx >= 0 ? args.splice(tokIdx, 2)[1] : undefined) ?? process.env.FORGE_TOKEN ?? null;
+const TOKEN = (tokIdx >= 0 ? args.splice(tokIdx, 2)[1] : undefined) ?? process.env.BRIDGES_TOKEN ?? null;
 
 const SRC = args[0];
 const SERVER = (args[1] ?? "http://localhost:4321").replace(/\/$/, "");

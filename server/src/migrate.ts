@@ -3,7 +3,7 @@
  * antes de preparar los `db.query(...)`. SQLite no cambia UNIQUE/PK con ALTER,
  * así que `documents`, `changes` y `tokens` se reconstruyen (nueva tabla →
  * copiar con vault='default' → drop → rename). Todo lo viejo cae al vault
- * `default`; el FORGE_TOKEN sigue siendo admin de `default`.
+ * `default`; el BRIDGES_TOKEN sigue siendo admin de `default`.
  *
  * DB primero (transaccional/reversible), disco después (idempotente por sí solo).
  */
@@ -12,7 +12,7 @@ import { copyFileSync, readdirSync, mkdirSync, renameSync, existsSync } from "no
 import { join } from "node:path";
 import { VAULT_DIR } from "./vault";
 
-const DB_PATH = process.env.FORGE_DB ?? "forge.db";
+const DB_PATH = process.env.BRIDGES_DB ?? "bridges.db";
 
 function tableExists(db: Database, name: string): boolean {
   return db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;

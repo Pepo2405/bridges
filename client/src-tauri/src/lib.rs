@@ -142,7 +142,7 @@ fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<ScannedDoc>) -> std::io::Resu
 }
 
 /// Observa el vault y emite "vault-change" con las rutas .md afectadas (relativas).
-/// Ignora .forge/, .obsidian/ y cualquier componente que empiece con punto.
+/// Ignora .bridges/, .obsidian/ y cualquier componente que empiece con punto.
 #[tauri::command]
 fn start_watch(
     app: AppHandle,
@@ -203,7 +203,7 @@ fn stop_watch(state: State<WatcherState>, conn_id: String) {
 }
 
 fn state_path(vault: &str) -> PathBuf {
-    PathBuf::from(vault).join(".forge").join("state.json")
+    PathBuf::from(vault).join(".bridges").join("state.json")
 }
 
 #[tauri::command]
@@ -230,7 +230,7 @@ fn state_save(vault: String, last_seq: i64, server_url: String) -> Result<(), St
 }
 
 fn index_path(vault: &str) -> PathBuf {
-    PathBuf::from(vault).join(".forge").join("index.json")
+    PathBuf::from(vault).join(".bridges").join("index.json")
 }
 
 /// Índice de reconciliación offline (base del 3-way merge + cola de cambios sucios).
@@ -256,7 +256,7 @@ fn index_save(vault: String, data: String) -> Result<(), String> {
 /// Config global de la app (lista de conexiones). Vive en el dir de config, no en un vault.
 fn config_file(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("forge.json"))
+    Ok(dir.join("bridges.json"))
 }
 
 #[tauri::command]

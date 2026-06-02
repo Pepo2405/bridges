@@ -1,23 +1,23 @@
 ---
-name: forge-docs
+name: bridges-docs
 description: >-
-  Documentá repositorios en el vault de Forge de forma estructurada. Usar cuando el
+  Documentá repositorios en el vault de Bridges de forma estructurada. Usar cuando el
   usuario pida documentar un repo/proyecto, actualizar su documentación, o escribir
-  docs de un repositorio en Forge ("documentá este repo", "actualizá los docs de X en
-  Forge", "documentá esto en el vault"). Cubre: ubicar el vault en disco, la estructura
+  docs de un repositorio en Bridges ("documentá este repo", "actualizá los docs de X en
+  Bridges", "documentá esto en el vault"). Cubre: ubicar el vault en disco, la estructura
   "01 - Proyectos/{repo}/", la convención de wikilinks y mantener el índice del vault.
 ---
 
-# Documentar repos en el vault de Forge
+# Documentar repos en el vault de Bridges
 
-Forge es un vault de documentación compartido del equipo: una carpeta de `.md` en disco
+Bridges es un vault de documentación compartido del equipo: una carpeta de `.md` en disco
 que una app sincroniza con un server (y que el equipo lee en vivo). Tu trabajo con esta
 skill es **documentar el repo actual dentro del vault**, siguiendo las convenciones de
-abajo. Escribís archivos `.md` normales; la app de Forge los sincroniza sola.
+abajo. Escribís archivos `.md` normales; la app de Bridges los sincroniza sola.
 
 ## 1. Ubicá el vault (está en OTRA carpeta, no en este repo)
 
-Esta skill corre dentro de un repo de código, pero los docs van al vault de Forge, que
+Esta skill corre dentro de un repo de código, pero los docs van al vault de Bridges, que
 vive en otro lado. Resolvé su ruta así (en orden):
 
 1. Ejecutá el helper:
@@ -27,9 +27,9 @@ vive en otro lado. Resolvé su ruta así (en orden):
    (relativo al directorio de esta skill; imprime la ruta del vault).
 2. Si no tenés a mano el script, leelo directo de la config de la app:
    ```bash
-   python3 -c "import json,os;p=os.path.expanduser('~/Library/Application Support/com.pxsol.forge/forge.json');print(json.load(open(p)).get('lastVault'))"
+   python3 -c "import json,os;p=os.path.expanduser('~/Library/Application Support/com.pxsol.bridges/bridges.json');print(json.load(open(p)).get('lastVault'))"
    ```
-3. Fallbacks: variable de entorno `FORGE_VAULT`, o **preguntale al usuario** la ruta si
+3. Fallbacks: variable de entorno `BRIDGES_VAULT`, o **preguntale al usuario** la ruta si
    hay ambigüedad (varios vaults) o no se resuelve.
 
 Llamá `VAULT` a esa ruta. Todos los paths de abajo son relativos a `VAULT`.
@@ -96,7 +96,7 @@ Pasos reales para levantarlo localmente (install, env, comando de dev).
 
 ## 6. Reglas
 
-- **No toques `.forge/`** (estado interno de la app) ni `.obsidian/`, `.git/`.
+- **No toques `.bridges/`** (estado interno de la app) ni `.obsidian/`, `.git/`.
 - **No borres ni reescribas docs ajenos** sin pedirlo; ante la duda, agregá/actualizá.
 - Markdown estándar; sin frontmatter salvo que el vault ya lo use.
 - Si algo del repo no lo entendés, dejalo marcado como `> TODO: …` en vez de inventar.

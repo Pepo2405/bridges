@@ -1,4 +1,4 @@
-# Forge
+# Bridges
 
 Vault de documentación compartido para el equipo — Obsidian self-hosteado + contexto para Claude Code.
 
@@ -37,7 +37,7 @@ La fuente de verdad son **archivos `.md` en disco**. El servidor mantiene la cop
 - **Panel de filtros/fuerzas** del grafo (`GraphControls.tsx`): búsqueda/resaltado, toggles (solo existentes, huérfanos), modo de labels, sliders de fuerzas en vivo.
 - **Wikilinks navegables** en el preview + **panel de backlinks** (`lib/links.ts`, `Backlinks.tsx`).
 - **Sync bidireccional** (`notify` en Rust + watcher en `store.ts`): ediciones externas (Zed, Claude Code) vuelven al server. Echo evitado por comparación de contenido.
-- **Conexiones guardadas + autoconexión** (`config_load`/`config_save` → `forge.json` en el config dir): abre el último vault solo; gestor para cambiar/agregar.
+- **Conexiones guardadas + autoconexión** (`config_load`/`config_save` → `bridges.json` en el config dir): abre el último vault solo; gestor para cambiar/agregar.
 - **Operaciones de archivos** en el árbol (⋮ / click derecho): renombrar/mover, eliminar, nueva nota en carpeta, renombrar/eliminar carpeta.
 - **Búsqueda full-text con ranking BM25** (SQLite FTS5): índice external-content sobre `documents` (title/path/content) mantenido por triggers, insensible a acentos. Reemplaza el `LIKE` plano, que ni rankeaba ni escalaba.
 - **MCP server** (`mcp/`): expone `search_vault` para que Claude Code busque rankeado en vez de grepear el vault. Ver `mcp/README.md`.
@@ -72,7 +72,7 @@ Stack: **Bun + bun:sqlite** (server), **Tauri 2 + SolidJS + shadcn-solid + Tailw
 ## Descargas (instaladores)
 
 Los instaladores para macOS, Windows y Linux se compilan en CI y se publican en la
-**[página de Releases](https://github.com/Pepo2405/forge/releases)** del repo. El repo es
+**[página de Releases](https://github.com/Pepo2405/bridges/releases)** del repo. El repo es
 privado: hay que estar logueado en GitHub con acceso al repo para descargarlos.
 
 | OS | Archivo | Notas |
@@ -110,7 +110,7 @@ bun run src/seed.ts     # datos de ejemplo (opcional)
 bun run dev             # http://localhost:4321
 ```
 
-Variables de entorno: `PORT`, `FORGE_DB`, `FORGE_VAULT`, `FORGE_TOKEN` (auth simple opcional).
+Variables de entorno: `PORT`, `BRIDGES_DB`, `BRIDGES_VAULT`, `BRIDGES_TOKEN` (auth simple opcional).
 
 ### Cliente (escritorio)
 
@@ -137,7 +137,7 @@ Requiere el toolchain de **Rust** (`rustup`). Para macOS Apple Silicon:
 ```bash
 cd client
 bun run tauri build
-# → src-tauri/target/release/bundle/dmg/Forge_<version>_aarch64.dmg
+# → src-tauri/target/release/bundle/dmg/Bridges_<version>_aarch64.dmg
 ```
 
 La primera compilación baja y compila todos los crates del shell nativo (varios minutos); las siguientes son incrementales.
@@ -151,7 +151,7 @@ bun run tauri build --target universal-apple-darwin
 
 > **Sin firmar (ad-hoc).** No hay certificado Apple Developer ID, así que Gatekeeper avisa que "no se puede verificar el desarrollador". Se abre con click derecho → Abrir, o quitando la cuarentena:
 > ```bash
-> xattr -dr com.apple.quarantine /Applications/Forge.app
+> xattr -dr com.apple.quarantine /Applications/Bridges.app
 > ```
 > Distribución sin fricción = firma + notarización con cuenta Apple Developer (backlog).
 
@@ -181,8 +181,8 @@ Multi-token con permisos por rol. Los tokens viven en SQLite (se guarda el **has
 
 - **401** = token ausente/inválido. **403** = token válido sin permiso (p.ej. un `editor` intentando borrar).
 - `GET /health` es **público** (para el healthcheck).
-- El token va en `Authorization: Bearer <token>`. Excepción: el SSE (`/events`) lo acepta por query `?token=<token>` porque el `EventSource` del browser no puede mandar headers. → el token aparece en logs de proxy; aceptable para red interna.
-- **La auth se activa sola** cuando existe al menos un token (o `FORGE_TOKEN`). Con tabla vacía y sin `FORGE_TOKEN`, el server queda **abierto** (modo dev). ⚠️ En un deploy público, seteá `FORGE_TOKEN` en el primer arranque para que nunca esté abierto, creá los tokens por persona, y después quitá `FORGE_TOKEN`.
+- El token va en `Authorization: Bearer`. Excepción: el SSE (`/events`) lo acepta por query `?token=<token>` porque el `EventSource` del browser no puede mandar headers. → el token aparece en logs de proxy; aceptable para red interna.
+- **La auth se activa sola** cuando existe al menos un token (o `BRIDGES_TOKEN`). Con tabla vacía y sin `BRIDGES_TOKEN`, el server queda **abierto** (modo dev). ⚠️ En un deploy público, seteá `BRIDGES_TOKEN` en el primer arranque para que nunca esté abierto, creá los tokens por persona, y después quitá `BRIDGES_TOKEN`.
 
 ### Administrar tokens (CLI)
 
@@ -203,19 +203,19 @@ El server corre con Bun y `bun:sqlite` (sin dependencias npm). Se despliega con 
 
 ```bash
 cd server
-docker build -t forge-server .
-docker run -d -p 4321:4321 -v forge-data:/data forge-server
+docker build -t bridges-server .
+docker run -d -p 4321:4321 -v bridges-data:/data bridges-server
 ```
 
-La DB (`FORGE_DB`) y el vault canónico (`FORGE_VAULT`) van a **`/data`**, montado como volumen para sobrevivir redeploys.
+La DB (`BRIDGES_DB`) y el vault canónico (`BRIDGES_VAULT`) van a **`/data`**, montado como volumen para sobrevivir redeploys.
 
 ### Coolify
 
 1. Nueva app → **Docker Compose**, apuntando a `server/docker-compose.yml`.
-2. (Recomendado) seteá `FORGE_TOKEN` en las env para el primer login; el healthcheck pega a `/health`.
-3. Una vez levantado, creá los tokens por persona dentro del contenedor y quitá `FORGE_TOKEN`:
+2. (Recomendado) seteá `BRIDGES_TOKEN` en las env para el primer login; el healthcheck pega a `/health`.
+3. Una vez levantado, creá los tokens por persona dentro del contenedor y quitá `BRIDGES_TOKEN`:
    ```bash
-   docker compose exec forge bun run src/tokens.ts add ivan admin
+   docker compose exec bridges bun run src/tokens.ts add ivan admin
    ```
 
 > SSE detrás del reverse proxy: el server manda keep-alive cada 25s para que el proxy no corte la conexión.

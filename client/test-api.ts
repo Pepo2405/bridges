@@ -1,7 +1,7 @@
 // Test de integración del cliente API contra un server real en :4321.
-import { ForgeApi } from "./src/lib/api";
+import { BridgesApi } from "./src/lib/api";
 
-const api = new ForgeApi("http://localhost:4321");
+const api = new BridgesApi("http://localhost:4321");
 let pass = 0;
 let fail = 0;
 function check(name: string, cond: boolean) {

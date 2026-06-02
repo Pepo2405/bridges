@@ -338,4 +338,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`forge-server escuchando en http://localhost:${server.port}`);
+console.log(`bridges-server escuchando en http://localhost:${server.port}`);

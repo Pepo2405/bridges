@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    forge_client_lib::run()
+    bridges_client_lib::run()
 }

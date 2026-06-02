@@ -1,4 +1,4 @@
-# Forge server — Bun + bun:sqlite. Sin dependencias npm: sqlite es nativo de Bun.
+# Bridges server — Bun + bun:sqlite. Sin dependencias npm: sqlite es nativo de Bun.
 FROM oven/bun:1-slim
 WORKDIR /app
 
@@ -7,10 +7,10 @@ COPY package.json ./
 COPY src ./src
 
 # La DB (índice + seq) y el vault canónico viven en /data, que se monta como volumen
-# para sobrevivir redeploys. El token admin de arranque se pasa por env (FORGE_TOKEN),
+# para sobrevivir redeploys. El token admin de arranque se pasa por env (BRIDGES_TOKEN),
 # o se crean tokens con el CLI: `bun run src/tokens.ts add <nombre> <rol>`.
-ENV FORGE_DB=/data/forge.db \
-    FORGE_VAULT=/data/vault \
+ENV BRIDGES_DB=/data/bridges.db \
+    BRIDGES_VAULT=/data/vault \
     PORT=4321
 RUN mkdir -p /data/vault
 

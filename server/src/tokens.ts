@@ -3,7 +3,7 @@
  *   bun run src/tokens.ts add <vault> <nombre> <viewer|editor|admin>
  *   bun run src/tokens.ts list <vault>
  *   bun run src/tokens.ts revoke <vault> <nombre>
- * Usa la misma DB que el server (FORGE_DB), así que en Coolify se corre dentro
+ * Usa la misma DB que el server (BRIDGES_DB), así que en Coolify se corre dentro
  * del contenedor apuntando al volumen.
  */
 import { addToken, listTokens, revokeToken, ROLES, type Role } from "./auth";

@@ -121,7 +121,7 @@ export type Connection = { vault: string; serverUrl: string; token?: string; ope
 export type AppConfig = { connections: Connection[]; lastVault: string | null };
 
 const EMPTY_CONFIG: AppConfig = { connections: [], lastVault: null };
-const CONFIG_KEY = "forge.config";
+const CONFIG_KEY = "bridges.config";
 
 export async function configLoad(): Promise<AppConfig> {
   try {
@@ -174,7 +174,7 @@ export async function setAutostart(enabled: boolean): Promise<void> {
   await invoke("set_autostart", { enabled });
 }
 
-// --- índice de reconciliación offline (.forge/index.json). Blob opaco; el schema vive en reconcile.ts ---
+// --- índice de reconciliación offline (.bridges/index.json). Blob opaco; el schema vive en reconcile.ts ---
 
 const memIndex = new Map<string, string>();
 

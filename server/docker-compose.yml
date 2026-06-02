@@ -1,22 +1,22 @@
-# Deploy del server Forge. En Coolify: "Docker Compose" apuntando a este archivo.
+# Deploy del server Bridges. En Coolify: "Docker Compose" apuntando a este archivo.
 # El healthcheck pega a /health (público). Los tokens se crean con el CLI dentro
-# del contenedor: docker compose exec forge bun run src/tokens.ts add <nombre> <rol>
+# del contenedor: docker compose exec bridges bun run src/tokens.ts add <nombre> <rol>
 services:
-  forge:
+  bridges:
     build: .
     # `expose` (no `ports`): Coolify rutea via su proxy (Traefik) sin bindear
     # un puerto del host. El routing externo + HTTPS los maneja Coolify.
     expose:
       - "4321"
     environment:
-      FORGE_DB: /data/forge.db
-      FORGE_VAULT: /data/vault
+      BRIDGES_DB: /data/bridges.db
+      BRIDGES_VAULT: /data/vault
       PORT: "4321"
       # Admin de arranque: se setea como env en Coolify. Vacío por defecto para
       # `docker compose up` local (con tabla vacía y sin esto, la auth queda off).
-      FORGE_TOKEN: ${FORGE_TOKEN:-}
+      BRIDGES_TOKEN: ${BRIDGES_TOKEN:-}
     volumes:
-      - forge-data:/data
+      - bridges-data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://localhost:4321/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -25,4 +25,4 @@ services:
       retries: 3
 
 volumes:
-  forge-data:
+  bridges-data:

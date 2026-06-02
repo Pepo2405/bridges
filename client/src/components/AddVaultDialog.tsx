@@ -140,7 +140,7 @@ export const AddVaultDialog: Component<{ open: boolean; onOpenChange: (o: boolea
                 {pending()!.localOnly.length === 1 ? "" : "n"} en el server.
               </p>
               <p class="text-xs text-muted-foreground">
-                Importalas (se suben al server) o dejalas como están (no aparecen en Forge hasta editarlas).
+                Importalas (se suben al server) o dejalas como están (no aparecen en Bridges hasta editarlas).
               </p>
             </div>
           </Show>

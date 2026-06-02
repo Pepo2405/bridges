@@ -5,8 +5,8 @@
  * (header `x-confirm-bulk: true`). El estado se resetea al reiniciar el server.
  */
 
-export const DELETE_LIMIT = Number(process.env.FORGE_DELETE_LIMIT ?? 10);
-const WINDOW_MS = Number(process.env.FORGE_DELETE_WINDOW ?? 60) * 1000;
+export const DELETE_LIMIT = Number(process.env.BRIDGES_DELETE_LIMIT ?? 10);
+const WINDOW_MS = Number(process.env.BRIDGES_DELETE_WINDOW ?? 60) * 1000;
 
 const recent = new Map<string, number[]>();
 

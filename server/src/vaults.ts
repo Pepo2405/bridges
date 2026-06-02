@@ -3,7 +3,7 @@
  *   bun run src/vaults.ts add <slug> [nombre]
  *   bun run src/vaults.ts list
  * Crea el vault, su carpeta de disco y un token admin (se imprime una vez).
- * Usa la misma DB que el server (FORGE_DB).
+ * Usa la misma DB que el server (BRIDGES_DB).
  */
 import { createVault, listVaults, getVault } from "./db";
 import { addToken } from "./auth";

@@ -1,9 +1,9 @@
 /**
  * Índice FTS5 local del vault, construido desde la réplica de `.md` en disco
- * (FORGE_VAULT_DIR). Evita el round-trip HTTP al server: la búsqueda pasa de
+ * (BRIDGES_VAULT_DIR). Evita el round-trip HTTP al server: la búsqueda pasa de
  * ~290 ms (red) a sub-ms. Funciona offline y sin token.
  *
- * Espeja exactamente el índice del server (forge-server/src/db.ts + search.ts)
+ * Espeja exactamente el índice del server (bridges-server/src/db.ts + search.ts)
  * para que el ranking local sea idéntico al remoto: mismas columnas
  * (title, path, content), mismo tokenizer (unicode61 remove_diacritics 2),
  * mismos pesos BM25 (10/5/1) y el mismo `deriveTitle` (primer H1 o filename).
@@ -17,7 +17,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { SearchHit } from "./forge";
+import type { SearchHit } from "./bridges";
 
 // Pesos BM25 por columna (title, path, content), idénticos a search.ts del server.
 const BM25 = "bm25(fts, 10.0, 5.0, 1.0)";

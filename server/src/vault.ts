@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join, normalize, sep } from "node:path";
 
-const VAULT_DIR = process.env.FORGE_VAULT ?? join(import.meta.dir, "..", "vault");
+const VAULT_DIR = process.env.BRIDGES_VAULT ?? join(import.meta.dir, "..", "vault");
 
 /** Slug de vault: minúsculas/dígitos/guiones. Doble como segmento de disco. */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -9,7 +9,7 @@ export function isValidSlug(slug: string): boolean {
   return SLUG_RE.test(slug);
 }
 
-/** Raíz de disco de un vault: `${FORGE_VAULT}/${slug}/`. Valida el slug. */
+/** Raíz de disco de un vault: `${BRIDGES_VAULT}/${slug}/`. Valida el slug. */
 function vaultRoot(vault: string): string {
   if (!isValidSlug(vault)) throw new Error(`slug de vault inválido: ${vault}`);
   return join(VAULT_DIR, vault);

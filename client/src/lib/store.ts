@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store";
 import { createSignal } from "solid-js";
-import { ForgeApi, ApiError, type Doc } from "./api";
+import { BridgesApi, ApiError, type Doc } from "./api";
 import {
   pickVault,
   vaultWrite,
@@ -72,7 +72,7 @@ type State = {
  */
 type SessionRuntime = {
   vault: string;
-  api: ForgeApi;
+  api: BridgesApi;
   index: idx.IndexHandle;
   flushing: boolean;
   bulkConfirmed: boolean; // el usuario destrabó la guardia: los deletes en cola van con bypass
@@ -112,7 +112,7 @@ export function active(): Session | null {
 }
 
 /** Api de la sesión enfocada (reemplaza el viejo singleton `api`). */
-export function activeApi(): ForgeApi | undefined {
+export function activeApi(): BridgesApi | undefined {
   return state.activeVault ? runtimes.get(state.activeVault)?.api : undefined;
 }
 
@@ -614,7 +614,7 @@ export async function resolveConflictKeepServer(vault: string, path: string) {
 // --- ciclo de vida de las sesiones ---
 
 /**
- * Abre una sesión de sync para un vault: crea su ForgeApi + IndexHandle, hace
+ * Abre una sesión de sync para un vault: crea su BridgesApi + IndexHandle, hace
  * health → reconcile → whoami, y arranca stream SSE + watcher. Server caído →
  * la sesión queda offline e hidrata desde disco; un error de auth propaga (y
  * limpia la sesión a medio abrir). Idempotente: si ya está abierta, no hace nada.
@@ -622,7 +622,7 @@ export async function resolveConflictKeepServer(vault: string, path: string) {
 export async function openSession(opts: { vault: string; serverUrl?: string; token?: string }) {
   if (runtimes.has(opts.vault)) return;
   const serverUrl = (opts.serverUrl ?? DEFAULT_SERVER).replace(/\/$/, "");
-  const api = new ForgeApi(serverUrl);
+  const api = new BridgesApi(serverUrl);
   api.setToken(opts.token ?? null);
   const index = idx.createIndexHandle(opts.vault);
   await index.load();
@@ -907,7 +907,7 @@ export async function pickVaultAndInspect(serverUrlRaw?: string, token?: string)
   const vault = await pickVault();
   if (!vault) return null;
   const serverUrl = (serverUrlRaw ?? DEFAULT_SERVER).replace(/\/$/, "");
-  const probe = new ForgeApi(serverUrl);
+  const probe = new BridgesApi(serverUrl);
   probe.setToken(token ?? null);
   await probe.health();
   const [local, sync] = await Promise.all([vaultScan(vault), probe.sync(0)]);

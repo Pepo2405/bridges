@@ -1,4 +1,4 @@
-/** Cliente del server Forge: REST + suscripción SSE. */
+/** Cliente del server Bridges: REST + suscripción SSE. */
 
 export type Doc = {
   id: string;
@@ -47,7 +47,7 @@ export class ApiError extends Error {
   }
 }
 
-export class ForgeApi {
+export class BridgesApi {
   private token: string | null = null;
 
   constructor(private base: string) {}

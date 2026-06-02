@@ -1055,7 +1055,7 @@ const App: Component = () => {
                                 </For>
                               </div>
                             </Show>
-                            <div class="prose-forge" innerHTML={preview()} onClick={onPreviewClick} />
+                            <div class="prose-bridges" innerHTML={preview()} onClick={onPreviewClick} />
                           </div>
                         </div>
                       }

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permisos por defecto de Forge",
+  "description": "Permisos por defecto de Bridges",
   "windows": ["main"],
   "permissions": ["core:default", "dialog:default"]
 }

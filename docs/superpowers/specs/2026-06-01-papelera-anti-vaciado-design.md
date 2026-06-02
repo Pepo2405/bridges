@@ -65,7 +65,7 @@ FK). No incrementa `seq` ni hace broadcast (el doc ya no está vivo; las réplic
   - Si no, contar deletes en la ventana. Si `count >= LIMIT` → responder **429**
     `{ error, code: "bulk_delete_guard", recent: count, limit: LIMIT }` **sin** borrar.
   - Si pasa, registrar el timestamp y proceder.
-- Config por env: `FORGE_DELETE_LIMIT` (default **10**), `FORGE_DELETE_WINDOW` segundos (default **60**).
+- Config por env: `BRIDGES_DELETE_LIMIT` (default **10**), `BRIDGES_DELETE_WINDOW` segundos (default **60**).
 - Aplica **sólo** a soft-delete (vector real del vaciado). El hard-delete de papelera ya es
   admin + de a uno.
 

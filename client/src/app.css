@@ -68,30 +68,30 @@
 }
 
 /* Render de markdown en el preview */
-.prose-forge {
+.prose-bridges {
   font-size: 0.875rem;
   line-height: 1.65;
   color: hsl(var(--foreground));
 }
-.prose-forge h1 { font-size: 1.5rem; font-weight: 600; margin: 0.6em 0 0.4em; }
-.prose-forge h2 { font-size: 1.25rem; font-weight: 600; margin: 0.8em 0 0.4em; border-bottom: 1px solid hsl(var(--border)); padding-bottom: 0.2em; }
-.prose-forge h3 { font-size: 1.05rem; font-weight: 600; margin: 0.8em 0 0.3em; }
-.prose-forge p { margin: 0.5em 0; }
-.prose-forge ul, .prose-forge ol { margin: 0.5em 0; padding-left: 1.4em; }
-.prose-forge li { margin: 0.2em 0; }
-.prose-forge a { color: hsl(217 91% 60%); text-decoration: none; }
-.prose-forge a:hover { text-decoration: underline; }
-.prose-forge .wikilink { color: hsl(217 91% 66%); cursor: pointer; text-decoration: none; }
-.prose-forge .wikilink:hover { text-decoration: underline; }
-.prose-forge .wikilink-missing { color: hsl(var(--muted-foreground)); cursor: default; border-bottom: 1px dashed hsl(var(--muted-foreground) / 0.5); }
-.prose-forge .wikilink-missing:hover { text-decoration: none; }
-.prose-forge code { background: hsl(var(--muted)); padding: 0.12em 0.35em; border-radius: 4px; font-size: 0.85em; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-.prose-forge pre { background: hsl(var(--muted)); padding: 0.9em 1em; border-radius: var(--radius); overflow-x: auto; margin: 0.7em 0; }
-.prose-forge pre code { background: none; padding: 0; }
-.prose-forge blockquote { border-left: 3px solid hsl(var(--border)); padding-left: 1em; color: hsl(var(--muted-foreground)); margin: 0.6em 0; }
-.prose-forge table { border-collapse: collapse; margin: 0.7em 0; }
-.prose-forge th, .prose-forge td { border: 1px solid hsl(var(--border)); padding: 0.4em 0.7em; }
-.prose-forge hr { border: none; border-top: 1px solid hsl(var(--border)); margin: 1em 0; }
+.prose-bridges h1 { font-size: 1.5rem; font-weight: 600; margin: 0.6em 0 0.4em; }
+.prose-bridges h2 { font-size: 1.25rem; font-weight: 600; margin: 0.8em 0 0.4em; border-bottom: 1px solid hsl(var(--border)); padding-bottom: 0.2em; }
+.prose-bridges h3 { font-size: 1.05rem; font-weight: 600; margin: 0.8em 0 0.3em; }
+.prose-bridges p { margin: 0.5em 0; }
+.prose-bridges ul, .prose-bridges ol { margin: 0.5em 0; padding-left: 1.4em; }
+.prose-bridges li { margin: 0.2em 0; }
+.prose-bridges a { color: hsl(217 91% 60%); text-decoration: none; }
+.prose-bridges a:hover { text-decoration: underline; }
+.prose-bridges .wikilink { color: hsl(217 91% 66%); cursor: pointer; text-decoration: none; }
+.prose-bridges .wikilink:hover { text-decoration: underline; }
+.prose-bridges .wikilink-missing { color: hsl(var(--muted-foreground)); cursor: default; border-bottom: 1px dashed hsl(var(--muted-foreground) / 0.5); }
+.prose-bridges .wikilink-missing:hover { text-decoration: none; }
+.prose-bridges code { background: hsl(var(--muted)); padding: 0.12em 0.35em; border-radius: 4px; font-size: 0.85em; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.prose-bridges pre { background: hsl(var(--muted)); padding: 0.9em 1em; border-radius: var(--radius); overflow-x: auto; margin: 0.7em 0; }
+.prose-bridges pre code { background: none; padding: 0; }
+.prose-bridges blockquote { border-left: 3px solid hsl(var(--border)); padding-left: 1em; color: hsl(var(--muted-foreground)); margin: 0.6em 0; }
+.prose-bridges table { border-collapse: collapse; margin: 0.7em 0; }
+.prose-bridges th, .prose-bridges td { border: 1px solid hsl(var(--border)); padding: 0.4em 0.7em; }
+.prose-bridges hr { border: none; border-top: 1px solid hsl(var(--border)); margin: 1em 0; }
 
 /* #tags como pills clicleables (preview + panel de propiedades). */
 .tag {

@@ -1,7 +1,7 @@
 # Instaladores cross-platform (GitHub Actions) — Design
 
 **Fecha:** 2026-06-01
-**Proyecto:** Bridges (app Tauri 2 — `client/src-tauri`; repo privado `Pepo2405/forge`)
+**Proyecto:** Bridges (app Tauri 2 — `client/src-tauri`; repo privado `Pepo2405/bridges`)
 
 ## Contexto
 
@@ -102,7 +102,7 @@ No es ejecutable localmente (corre en GitHub). Validación:
   en verde → pestaña **Releases** muestra los assets descargables:
   `.dmg`, `.msi`, `.exe` (setup NSIS), `.AppImage`, `.deb`.
 - Smoke test: descargar el `.dmg` y el `.AppImage`, abrir la app, confirmar que arranca
-  y conecta a `forge.pepo.ar`.
+  y conecta a `bridges.pepo.ar`.
 
 ## Fuera de alcance (YAGNI)
 

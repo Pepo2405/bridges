@@ -6,10 +6,10 @@ import { createHash } from "node:crypto";
 import { Database } from "bun:sqlite";
 
 // Tests de integración: levantan el server real como subproceso con DB y vault
-// temporales (FORGE_DB/FORGE_VAULT) y lo ejercitan por HTTP. Evita importar
+// temporales (BRIDGES_DB/BRIDGES_VAULT) y lo ejercitan por HTTP. Evita importar
 // db.ts/auth.ts directo, que abrirían la DB real al importarse.
 
-const ADMIN = "fg_test_admin";
+const ADMIN = "bg_test_admin";
 
 async function waitHealth(base: string, tries = 60) {
   for (let i = 0; i < tries; i++) {
@@ -25,11 +25,11 @@ async function waitHealth(base: string, tries = 60) {
 
 function spawnServer(port: number, extraEnv: Record<string, string> = {}, paths?: { db: string; vault: string }) {
   const stamp = `${port}-${Date.now()}`;
-  const db = paths?.db ?? join(tmpdir(), `forge-test-${stamp}.db`);
-  const vault = paths?.vault ?? join(tmpdir(), `forge-test-vault-${stamp}`);
+  const db = paths?.db ?? join(tmpdir(), `bridges-test-${stamp}.db`);
+  const vault = paths?.vault ?? join(tmpdir(), `bridges-test-vault-${stamp}`);
   const proc = Bun.spawn({
     cmd: ["bun", "run", join(import.meta.dir, "..", "src", "index.ts")],
-    env: { ...process.env, ...extraEnv, PORT: String(port), FORGE_DB: db, FORGE_VAULT: vault },
+    env: { ...process.env, ...extraEnv, PORT: String(port), BRIDGES_DB: db, BRIDGES_VAULT: vault },
     stdout: "ignore",
     stderr: "ignore",
   });
@@ -85,7 +85,7 @@ describe("server con auth (admin bootstrap)", () => {
   let cleanup: () => void;
 
   beforeAll(async () => {
-    ({ base, cleanup } = spawnServer(4501, { FORGE_TOKEN: ADMIN }));
+    ({ base, cleanup } = spawnServer(4501, { BRIDGES_TOKEN: ADMIN }));
     await waitHealth(base);
   });
   afterAll(() => cleanup());
@@ -208,7 +208,7 @@ describe("server con auth (admin bootstrap)", () => {
       })
     ).json();
     expect(created.role).toBe("editor");
-    expect(created.token).toStartWith("fg_");
+    expect(created.token).toStartWith("bg_");
     const editor = created.token;
 
     const who = await (await fetch(`${base}/whoami`, { headers: bearer(editor) })).json();
@@ -252,7 +252,7 @@ describe("multi-vault (owner crea y aísla vaults)", () => {
   let trabajo: string; // token admin del vault "trabajo"
 
   beforeAll(async () => {
-    ({ base, cleanup } = spawnServer(4503, { FORGE_TOKEN: ADMIN }));
+    ({ base, cleanup } = spawnServer(4503, { BRIDGES_TOKEN: ADMIN }));
     await waitHealth(base);
     const r = await fetch(`${base}/vaults`, {
       method: "POST",
@@ -262,7 +262,7 @@ describe("multi-vault (owner crea y aísla vaults)", () => {
     expect(r.status).toBe(201);
     const body = await r.json();
     expect(body.vault.slug).toBe("trabajo");
-    expect(body.token).toStartWith("fg_");
+    expect(body.token).toStartWith("bg_");
     trabajo = body.token;
   });
   afterAll(() => cleanup());
@@ -390,7 +390,7 @@ describe("migración del esquema viejo a multi-vault", () => {
   let cleanup: () => void;
   let db: string;
   let vault: string;
-  const LEGACY = "fg_legacy_token";
+  const LEGACY = "bg_legacy_token";
 
   function buildOldDb(dbPath: string, vaultDir: string) {
     const d = new Database(dbPath, { create: true });
@@ -430,8 +430,8 @@ describe("migración del esquema viejo a multi-vault", () => {
 
   beforeAll(async () => {
     const stamp = `mig-${Date.now()}`;
-    db = join(tmpdir(), `forge-test-${stamp}.db`);
-    vault = join(tmpdir(), `forge-test-vault-${stamp}`);
+  db = join(tmpdir(), `bridges-test-${stamp}.db`);
+  vault = join(tmpdir(), `bridges-test-vault-${stamp}`);
     buildOldDb(db, vault);
     ({ base, cleanup } = spawnServer(4504, {}, { db, vault }));
     await waitHealth(base);
@@ -609,7 +609,7 @@ describe("papelera: restaurar y borrado definitivo", () => {
     ).token;
 
   beforeAll(async () => {
-    ({ base, cleanup, vault } = spawnServer(4506, { FORGE_TOKEN: ADMIN }));
+    ({ base, cleanup, vault } = spawnServer(4506, { BRIDGES_TOKEN: ADMIN }));
     await waitHealth(base);
     viewer = await mkToken("v", "viewer");
     editor = await mkToken("e", "editor");
@@ -670,7 +670,7 @@ describe("guardia anti-vaciado (circuit breaker)", () => {
     ).json();
 
   beforeAll(async () => {
-    ({ base, cleanup } = spawnServer(4507, { FORGE_TOKEN: ADMIN, FORGE_DELETE_LIMIT: "3", FORGE_DELETE_WINDOW: "60" }));
+    ({ base, cleanup } = spawnServer(4507, { BRIDGES_TOKEN: ADMIN, BRIDGES_DELETE_LIMIT: "3", BRIDGES_DELETE_WINDOW: "60" }));
     await waitHealth(base);
   });
   afterAll(() => cleanup());

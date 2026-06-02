@@ -1,7 +1,7 @@
 /**
  * Auth multi-token con permisos por rol, scopeada por vault. Cada token
  * pertenece a UN vault; el server deduce el vault del token. Los tokens viven
- * en SQLite (se guarda el hash, no el token en claro). `FORGE_TOKEN` (env) es el
+ * en SQLite (se guarda el hash, no el token en claro). `BRIDGES_TOKEN` (env) es el
  * "server owner": admin del vault `default` y con poderes cross-vault.
  */
 import { createHash, randomBytes } from "node:crypto";
@@ -10,7 +10,7 @@ import { db } from "./db";
 export type Role = "viewer" | "editor" | "admin";
 export type Perm = "read" | "write" | "delete";
 
-/** Identidad resuelta de un token. El owner (FORGE_TOKEN) tiene isOwner=true. */
+/** Identidad resuelta de un token. El owner (BRIDGES_TOKEN) tiene isOwner=true. */
 export type Identity = { name: string; role: Role; vault: string; isOwner: boolean };
 
 export const ROLES: Role[] = ["viewer", "editor", "admin"];
@@ -37,7 +37,7 @@ const qInsert = db.query(
 );
 const qDelete = db.query("DELETE FROM tokens WHERE vault = ? AND name = ?");
 
-const BOOTSTRAP = process.env.FORGE_TOKEN ?? null;
+const BOOTSTRAP = process.env.BRIDGES_TOKEN ?? null;
 
 /** ¿La auth está activa? Sí si hay un admin de arranque o algún token en la tabla. */
 export function authEnabled(): boolean {
@@ -66,7 +66,7 @@ export function roleCan(role: Role, perm: Perm): boolean {
 /** Crea un token nuevo en un vault y devuelve el secreto en claro (solo se ve acá una vez). */
 export function addToken(vault: string, name: string, role: Role): string {
   if (!ROLES.includes(role)) throw new Error(`rol inválido: ${role} (usá ${ROLES.join(" | ")})`);
-  const token = "fg_" + randomBytes(24).toString("hex");
+  const token = "bg_" + randomBytes(24).toString("hex");
   qInsert.run({ $vault: vault, $name: name, $hash: hash(token), $role: role, $now: new Date().toISOString() });
   return token;
 }

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { writeDoc, removeDoc } from "./vault";
 import { migrate } from "./migrate";
 
-const DB_PATH = process.env.FORGE_DB ?? "forge.db";
+const DB_PATH = process.env.BRIDGES_DB ?? "bridges.db";
 
 export const db = new Database(DB_PATH, { create: true });
 db.exec("PRAGMA journal_mode = WAL;");

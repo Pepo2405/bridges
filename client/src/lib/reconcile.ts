@@ -2,7 +2,7 @@
  * Motor de reconciliación offline-first.
  *
  * Este módulo es deliberadamente "tonto" respecto del store: solo maneja el
- * índice persistente (.forge/index.json), hashing y la clasificación pura de
+ * índice persistente (.bridges/index.json), hashing y la clasificación pura de
  * cada doc (disco vs base vs remoto). La orquestación con efectos (escribir
  * disco, pushear al server) vive en store.ts, que tiene el estado y la api.
  *
@@ -26,13 +26,13 @@ export type IndexEntry = {
   updated_at: string; // último cambio local
 };
 
-export type ForgeIndex = { version: 1; docs: Record<string, IndexEntry> };
+export type BridgesIndex = { version: 1; docs: Record<string, IndexEntry> };
 
-function emptyIndex(): ForgeIndex {
+function emptyIndex(): BridgesIndex {
   return { version: 1, docs: {} };
 }
 
-// --- índice por vault (espejo de .forge/index.json), instanciable ---
+// --- índice por vault (espejo de .bridges/index.json), instanciable ---
 
 /**
  * Maneja el índice de UN vault. Cada sesión de sync tiene su propio handle, así
@@ -40,8 +40,8 @@ function emptyIndex(): ForgeIndex {
  */
 export type IndexHandle = {
   vault: string;
-  load(): Promise<ForgeIndex>;
-  getIndex(): ForgeIndex;
+  load(): Promise<BridgesIndex>;
+  getIndex(): BridgesIndex;
   getEntry(path: string): IndexEntry | undefined;
   setEntry(path: string, entry: IndexEntry): void;
   deleteEntry(path: string): void;
@@ -53,7 +53,7 @@ export type IndexHandle = {
 };
 
 export function createIndexHandle(vault: string): IndexHandle {
-  let index: ForgeIndex = emptyIndex();
+  let index: BridgesIndex = emptyIndex();
   return {
     vault,
     async load() {
@@ -61,7 +61,7 @@ export function createIndexHandle(vault: string): IndexHandle {
       index = emptyIndex();
       if (raw) {
         try {
-          const parsed = JSON.parse(raw) as ForgeIndex;
+          const parsed = JSON.parse(raw) as BridgesIndex;
           if (parsed?.docs) index = { version: 1, docs: parsed.docs };
         } catch {
           /* índice corrupto: arrancamos vacío (degradación a 2-way manual por doc) */
