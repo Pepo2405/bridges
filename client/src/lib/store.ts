@@ -18,8 +18,12 @@ import {
   stateSave,
   configLoad,
   configSave,
+  secretSet,
+  secretGet,
+  secretDelete,
   isTauri,
   type Connection,
+  type AppConfig,
 } from "./tauri";
 import * as idx from "./reconcile";
 
@@ -643,7 +647,10 @@ export async function openSession(opts: { vault: string; serverUrl?: string | nu
   }
   const serverUrl = (opts.serverUrl ?? DEFAULT_SERVER).replace(/\/$/, "");
   const api = new BridgesApi(serverUrl);
-  api.setToken(opts.token ?? null);
+  // El token vive en el keychain (Tauri); el JSON ya no lo guarda. `opts.token`
+  // cubre el alta nueva (aún en memoria) y los configs viejos sin migrar.
+  const token = opts.token ?? (await secretGet(opts.vault)) ?? undefined;
+  api.setToken(token ?? null);
   const index = idx.createIndexHandle(opts.vault);
   await index.load();
   const rt: SessionRuntime = {
@@ -701,7 +708,7 @@ export async function openSession(opts: { vault: string; serverUrl?: string | nu
   }
 
   setState("sessions", opts.vault, "ready", true);
-  await startSessionSync(rt, serverUrl, opts.token);
+  await startSessionSync(rt, serverUrl, token);
 }
 
 /** Abre una sesión LOCAL: disco como verdad, store como espejo. Sin server. */
@@ -852,13 +859,54 @@ function setupNetworkListeners() {
 /** Guarda/actualiza la conexión y la marca como la última usada. No rompe nada si falla. */
 async function persistConnection(vault: string, serverUrl: string | null, token?: string) {
   try {
+    // El token va al keychain ANTES de tocar el JSON (invariante: nunca quitamos
+    // el token del JSON sin tenerlo a salvo). Vaults locales (sin server) no llevan token.
+    if (serverUrl !== null) {
+      if (token) await secretSet(vault, token);
+      else await secretDelete(vault);
+    }
     const cfg = await configLoad();
     const others = cfg.connections.filter((c) => c.vault !== vault);
-    const connections: Connection[] = [{ vault, serverUrl, token, openedAt: new Date().toISOString() }, ...others];
+    // En Tauri el token NO va al JSON (vive en el keychain). En browser sí, porque
+    // su secretSet es en memoria y se pierde al recargar (conveniencia de dev).
+    const conn: Connection = isTauri
+      ? { vault, serverUrl, openedAt: new Date().toISOString() }
+      : { vault, serverUrl, token, openedAt: new Date().toISOString() };
+    const connections: Connection[] = [conn, ...others];
     await configSave({ connections, lastVault: vault });
     setState("connections", connections);
   } catch (e) {
     console.warn("No se pudo guardar la conexión:", e);
+  }
+}
+
+/**
+ * Migración: mueve tokens en claro de configs viejos al keychain y los borra del
+ * JSON. Orden seguro: escribir al keychain y SOLO si funcionó sacar el token del
+ * JSON (un fallo conserva el token, no lo pierde). Solo en Tauri (browser no tiene
+ * keychain). Muta `cfg` para que el resto del boot abra sin tokens en el JSON.
+ */
+async function migrateTokensToKeychain(cfg: AppConfig): Promise<void> {
+  if (!isTauri) return;
+  let changed = false;
+  const connections: Connection[] = [];
+  for (const c of cfg.connections) {
+    if (c.token && c.serverUrl !== null) {
+      try {
+        await secretSet(c.vault, c.token);
+        connections.push({ vault: c.vault, serverUrl: c.serverUrl, openedAt: c.openedAt });
+        changed = true;
+      } catch {
+        connections.push(c); // keychain falló: conservar el token en el JSON
+      }
+    } else {
+      connections.push(c);
+    }
+  }
+  if (changed) {
+    await configSave({ connections, lastVault: cfg.lastVault });
+    cfg.connections = connections;
+    setState("connections", connections);
   }
 }
 
@@ -880,6 +928,7 @@ export async function boot() {
     setState("connections", cfg.connections);
     await registerGlobalListeners();
     setupNetworkListeners();
+    await migrateTokensToKeychain(cfg); // tokens en claro de configs viejos → keychain
     if (cfg.connections.length) {
       await Promise.allSettled(
         cfg.connections.map((c) =>
@@ -905,6 +954,7 @@ export async function removeConnection(vault: string) {
   const connections = cfg.connections.filter((c) => c.vault !== vault);
   const lastVault = cfg.lastVault === vault ? connections[0]?.vault ?? null : cfg.lastVault;
   await configSave({ connections, lastVault });
+  await secretDelete(vault).catch(() => {}); // que no quede el token huérfano en el keychain
   setState("connections", connections);
 }
 

@@ -152,6 +152,35 @@ export async function configSave(cfg: AppConfig): Promise<void> {
   await invoke("config_save", { data });
 }
 
+// --- secretos (tokens) en el keychain del SO. En browser no hay keychain:
+// stub en memoria (se pierde al recargar; el token igual vive en el config local). ---
+
+const memSecrets = new Map<string, string>();
+
+/** Guarda el token de una conexión (account = path del vault) en el keychain. */
+export async function secretSet(account: string, secret: string): Promise<void> {
+  if (!isTauri) {
+    memSecrets.set(account, secret);
+    return;
+  }
+  await invoke("secret_set", { account, secret });
+}
+
+/** Lee el token de una conexión del keychain. null si no hay. */
+export async function secretGet(account: string): Promise<string | null> {
+  if (!isTauri) return memSecrets.get(account) ?? null;
+  return (await invoke<string | null>("secret_get", { account })) ?? null;
+}
+
+/** Borra el token de una conexión del keychain. */
+export async function secretDelete(account: string): Promise<void> {
+  if (!isTauri) {
+    memSecrets.delete(account);
+    return;
+  }
+  await invoke("secret_delete", { account });
+}
+
 export type SyncState = { last_seq: number; server_url: string };
 
 export async function stateLoad(vault: string): Promise<SyncState> {

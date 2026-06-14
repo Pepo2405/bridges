@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use keyring::Entry;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem};
@@ -285,6 +286,38 @@ fn config_save(app: AppHandle, data: String) -> Result<(), String> {
     fs::write(&p, data).map_err(|e| e.to_string())
 }
 
+// --- secretos (tokens) en el keychain del SO, keyeados por path del vault ---
+const KEYRING_SERVICE: &str = "bridges";
+
+/// Guarda (o reemplaza) el token de una conexión en el keychain.
+#[tauri::command]
+fn secret_set(account: String, secret: String) -> Result<(), String> {
+    let e = Entry::new(KEYRING_SERVICE, &account).map_err(|e| e.to_string())?;
+    e.set_password(&secret).map_err(|e| e.to_string())
+}
+
+/// Lee el token de una conexión. `None` si no hay entrada (conexión sin token).
+#[tauri::command]
+fn secret_get(account: String) -> Result<Option<String>, String> {
+    let e = Entry::new(KEYRING_SERVICE, &account).map_err(|e| e.to_string())?;
+    match e.get_password() {
+        Ok(s) => Ok(Some(s)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Borra el token de una conexión. No-op si ya no existe.
+#[tauri::command]
+fn secret_delete(account: String) -> Result<(), String> {
+    let e = Entry::new(KEYRING_SERVICE, &account).map_err(|e| e.to_string())?;
+    match e.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Detiene el stream SSE de una conexión (invalida su generación).
 #[tauri::command]
 fn stop_event_stream(state: State<StreamState>, conn_id: String) {
@@ -432,6 +465,9 @@ pub fn run() {
             index_save,
             config_load,
             config_save,
+            secret_set,
+            secret_get,
+            secret_delete,
             start_event_stream,
             stop_event_stream,
             get_autostart,
