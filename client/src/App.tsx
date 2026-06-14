@@ -532,6 +532,7 @@ const App: Component = () => {
   const select = async (id: string) => {
     if (dirty() && !(await askConfirm({ title: "Cambios sin guardar", description: "Si seguís, se descartan los cambios de esta nota.", confirmText: "Descartar", destructive: true }))) return;
     setSelectedId(id);
+    setMode("preview"); // al seleccionar una nota, abrir en vista previa por defecto
     setQuery("");
     setHits([]);
   };
@@ -569,7 +570,10 @@ const App: Component = () => {
   const onCreate = async (path: string) => {
     setShowNew(false);
     const res = await saveDoc({ path, content: `# ${path.split("/").pop()!.replace(/\.md$/, "")}\n\n` });
-    if ("ok" in res) setSelectedId(res.doc.id);
+    if ("ok" in res) {
+      setSelectedId(res.doc.id);
+      setMode("edit"); // una nota recién creada se abre para escribir, no en preview
+    }
   };
 
   // Operaciones de archivos desde el árbol.
@@ -961,6 +965,7 @@ const App: Component = () => {
                   selectedId={selectedId()}
                   onSelect={(id) => {
                     setSelectedId(id);
+                    setMode("preview"); // al abrir una nota desde el grafo, vista previa por defecto
                     setView("editor");
                   }}
                 />
