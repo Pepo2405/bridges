@@ -2,7 +2,8 @@
 import { readFileSync } from "node:fs";
 import { join, normalize, sep } from "node:path";
 import { deriveTitle } from "../../server/src/search-common";
-import { searchLocal } from "./localIndex";
+import { searchLocal, walkMd } from "./localIndex";
+import type { DocLite } from "./graph";
 
 export type SearchHit = {
   id: string;
@@ -107,4 +108,21 @@ async function readNoteHttp(path: string): Promise<NoteContent | null> {
 export async function readNote(path: string): Promise<NoteContent | null> {
   if (USE_LOCAL) return readNoteLocal(VAULT_DIR!, path);
   return readNoteHttp(path);
+}
+
+/** Todos los docs vivos del vault (path/title/content). Para el grafo de wikilinks. */
+function allDocsLocal(vaultDir: string): DocLite[] {
+  return walkMd(vaultDir).map((rel) => {
+    const content = readFileSync(join(vaultDir, rel), "utf8");
+    return { path: rel, title: deriveTitle(content, rel), content };
+  });
+}
+
+/**
+ * Todos los docs vivos del vault. Modo local recorre el disco; modo HTTP usa
+ * /sync. backlinks/links necesitan el vault completo (saber quién enlaza a quién).
+ */
+export async function allDocs(): Promise<DocLite[]> {
+  if (USE_LOCAL) return allDocsLocal(VAULT_DIR!);
+  return (await fetchSyncDocs()).map((d) => ({ path: d.path, title: d.title, content: d.content }));
 }

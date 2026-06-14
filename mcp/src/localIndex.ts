@@ -53,7 +53,7 @@ function init() {
 }
 
 /** Paths relativos de los .md bajo `dir` (recursivo, ignora ocultos como .obsidian/.git). */
-function walkMd(dir: string, base: string = dir): string[] {
+export function walkMd(dir: string, base: string = dir): string[] {
   const out: string[] = [];
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (e.name.startsWith(".")) continue;
