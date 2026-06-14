@@ -48,6 +48,7 @@ import {
   cancelBulkDelete,
   localSearch,
 } from "~/lib/store";
+import { decideEditorSync } from "~/lib/editorSync";
 import { buildTree, renderMarkdown, setWikiResolver, parseFrontmatter } from "~/lib/markdown";
 import { buildBacklinks, createResolver, displayName } from "~/lib/links";
 import type { Doc, SearchHit } from "~/lib/api";
@@ -477,27 +478,33 @@ const App: Component = () => {
     const content = doc?.content;
     const version = doc?.version;
     untrack(() => {
-      if (!doc) {
-        loadedId = null;
-        return;
-      }
-      if (doc.id !== loadedId) {
-        // Cambió la selección -> cargar fresco.
-        loadedId = doc.id;
-        setDraft(content!);
-        setBaseVersion(version!);
-        setDirty(false);
-        return;
-      }
-      // Mismo doc: llegó una versión nueva desde afuera.
-      if (version === baseVersion()) return; // nada que reflejar
-      if (dirty()) {
-        // Hay borrador sin guardar: no lo pisamos, ofrecemos resolver.
-        setConflict({ local: draft(), server: doc });
-      } else {
-        // Sin cambios locales: reflejar la edición externa.
-        setDraft(content!);
-        setBaseVersion(version!);
+      const d = decideEditorSync(
+        { loadedId, draft: draft(), dirty: dirty(), baseVersion: baseVersion() },
+        doc ? { id: doc.id, content: content!, version: version! } : null,
+      );
+      switch (d.kind) {
+        case "clear":
+          loadedId = null;
+          break;
+        case "load": // cambió la selección -> cargar fresco
+          loadedId = doc!.id;
+          setDraft(d.content);
+          setBaseVersion(d.version);
+          setDirty(false);
+          break;
+        case "adopt": // el server confirmó nuestro borrador (eco propio o guardado idéntico)
+          setBaseVersion(d.version);
+          setDirty(false);
+          break;
+        case "conflict": // borrador sin guardar + versión nueva distinta -> resolver a mano
+          setConflict({ local: draft(), server: doc! });
+          break;
+        case "reflect": // sin cambios locales -> reflejar la edición externa
+          setDraft(d.content);
+          setBaseVersion(d.version);
+          break;
+        case "none":
+          break;
       }
     });
   });
