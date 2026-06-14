@@ -95,6 +95,17 @@ fn vault_remove(vault: String, path: String) -> Result<(), String> {
     }
 }
 
+/// Manda el archivo a la papelera del SO (recuperable desde Finder/Explorer).
+/// No-op silencioso si ya no existe.
+#[tauri::command]
+fn vault_trash(vault: String, path: String) -> Result<(), String> {
+    let abs = resolve_in_vault(&vault, &path)?;
+    if !abs.exists() {
+        return Ok(());
+    }
+    trash::delete(&abs).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn vault_read(vault: String, path: String) -> Result<String, String> {
     let abs = resolve_in_vault(&vault, &path)?;
@@ -410,6 +421,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             vault_write,
             vault_remove,
+            vault_trash,
             vault_read,
             vault_scan,
             start_watch,

@@ -46,6 +46,15 @@ export async function vaultRemove(vault: string, path: string): Promise<void> {
   await invoke("vault_remove", { vault, path });
 }
 
+/** Manda un archivo a la papelera del SO (recuperable). Borra del mem en browser. */
+export async function vaultTrash(vault: string, path: string): Promise<void> {
+  if (!isTauri) {
+    memFilesFor(vault).delete(path);
+    return;
+  }
+  await invoke("vault_trash", { vault, path });
+}
+
 /** Lee un archivo del vault. Devuelve null si no existe (p.ej. fue borrado). */
 export async function vaultRead(vault: string, path: string): Promise<string | null> {
   if (!isTauri) return memFilesFor(vault).get(path) ?? null;
@@ -117,7 +126,7 @@ export async function onServerStatus(cb: (connId: string, connected: boolean) =>
 
 // --- config global de la app: conexiones guardadas (carpeta + servidor) ---
 
-export type Connection = { vault: string; serverUrl: string; token?: string; openedAt: string };
+export type Connection = { vault: string; serverUrl: string | null; token?: string; openedAt: string };
 export type AppConfig = { connections: Connection[]; lastVault: string | null };
 
 const EMPTY_CONFIG: AppConfig = { connections: [], lastVault: null };

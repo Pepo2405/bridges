@@ -1,10 +1,11 @@
 import { createStore } from "solid-js/store";
 import { createSignal } from "solid-js";
-import { BridgesApi, ApiError, type Doc } from "./api";
+import { BridgesApi, ApiError, type Doc, type SearchHit } from "./api";
 import {
   pickVault,
   vaultWrite,
   vaultRemove,
+  vaultTrash,
   vaultRead,
   vaultScan,
   startWatch,
@@ -37,6 +38,7 @@ const baseName = (p: string) => p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ||
 export type Session = {
   vault: string;
   serverUrl: string;
+  local: boolean; // vault local sin server
   lastSeq: number;
   docs: Record<string, Doc>; // solo vivos (deleted=0)
   connected: boolean; // stream SSE vivo
@@ -72,8 +74,8 @@ type State = {
  */
 type SessionRuntime = {
   vault: string;
-  api: BridgesApi;
-  index: idx.IndexHandle;
+  api: BridgesApi | null; // null ⇒ vault local (sin server)
+  index: idx.IndexHandle | null; // null ⇒ vault local (sin índice de reconciliación)
   flushing: boolean;
   bulkConfirmed: boolean; // el usuario destrabó la guardia: los deletes en cola van con bypass
   unsubscribe: (() => void) | null; // cleanup del SSE (browser); null en Tauri
@@ -113,7 +115,7 @@ export function active(): Session | null {
 
 /** Api de la sesión enfocada (reemplaza el viejo singleton `api`). */
 export function activeApi(): BridgesApi | undefined {
-  return state.activeVault ? runtimes.get(state.activeVault)?.api : undefined;
+  return state.activeVault ? runtimes.get(state.activeVault)?.api ?? undefined : undefined;
 }
 
 function activeRuntime(): SessionRuntime | undefined {
@@ -124,6 +126,7 @@ function freshSession(vault: string, serverUrl: string): Session {
   return {
     vault,
     serverUrl,
+    local: false,
     lastSeq: 0,
     docs: {},
     connected: false,
@@ -155,6 +158,7 @@ export function setNotice(msg: string | null) {
  * suprime el eco de nuestra propia escritura.
  */
 async function applyDocs(rt: SessionRuntime, docs: Doc[]) {
+  if (!rt.api || !rt.index) return; // sesión local: no entra al motor remoto
   const sess = state.sessions[rt.vault];
   if (!sess) return;
   for (const d of docs) {
@@ -205,6 +209,7 @@ function authMessage(e: unknown, action: string): string | null {
 
 /** Pull incremental desde lastSeq para una sesión. */
 async function pullSession(rt: SessionRuntime) {
+  if (!rt.api || !rt.index) return; // sesión local: no entra al motor remoto
   const sess = state.sessions[rt.vault];
   if (!sess || sess.syncing) return;
   setState("sessions", rt.vault, { syncing: true, error: null });
@@ -246,17 +251,21 @@ const blankEntry = (): idx.IndexEntry => ({
 
 /** Persiste el índice y refresca el contador reactivo de pendientes para la UI. */
 async function persistIndex(rt: SessionRuntime) {
+  if (!rt.index) return; // sesión local: sin índice de reconciliación
   await rt.index.persist();
   setState("sessions", rt.vault, "pending", rt.index.dirtyPaths().length);
 }
 
 /** Borrados en cola (entradas dirty marcadas como deleted). */
 function pendingDeletes(rt: SessionRuntime): number {
-  return rt.index.dirtyPaths().filter((p) => rt.index.getEntry(p)?.deleted).length;
+  const index = rt.index;
+  if (!index) return 0;
+  return index.dirtyPaths().filter((p) => index.getEntry(p)?.deleted).length;
 }
 
 /** Marca un doc como borrado local pendiente de pushear. */
 function markDeleted(rt: SessionRuntime, path: string) {
+  if (!rt.index) return;
   const entry = rt.index.getEntry(path);
   if (!entry) return;
   entry.deleted = true;
@@ -267,6 +276,7 @@ function markDeleted(rt: SessionRuntime, path: string) {
 
 /** Marca un doc como editado local pendiente de pushear. */
 function markDirty(rt: SessionRuntime, path: string) {
+  if (!rt.index) return;
   const e = rt.index.getEntry(path) ?? blankEntry();
   e.dirty = true;
   e.deleted = false;
@@ -285,8 +295,10 @@ function enqueueConflict(rt: SessionRuntime, path: string, local: string, server
  * marca el doc como dirty (o borrado) en el índice y dispara el flush.
  */
 async function enqueuePush(rt: SessionRuntime, path: string) {
+  const index = rt.index;
+  if (!rt.api || !index) return; // sesión local: no entra al motor remoto
   const content = await vaultRead(rt.vault, path);
-  const entry = rt.index.getEntry(path);
+  const entry = index.getEntry(path);
 
   if (content == null) {
     if (entry) markDeleted(rt, path);
@@ -302,6 +314,7 @@ async function enqueuePush(rt: SessionRuntime, path: string) {
 
 /** Reenvía al server las entradas dirty del índice, en orden. Idempotente y serializado por sesión. */
 async function flushQueue(rt: SessionRuntime) {
+  if (!rt.api || !rt.index) return; // sesión local: no entra al motor remoto
   const sess = state.sessions[rt.vault];
   if (rt.flushing || !sess || !sess.online) return;
   rt.flushing = true;
@@ -317,6 +330,7 @@ async function flushQueue(rt: SessionRuntime) {
 
 /** Pushea una entrada dirty. Devuelve false si hay que cortar el flush (red caída). */
 async function pushOne(rt: SessionRuntime, path: string): Promise<boolean> {
+  if (!rt.api || !rt.index) return true; // sesión local: no entra al motor remoto
   const author = state.sessions[rt.vault].author;
   const entry = rt.index.getEntry(path);
   if (!entry || (!entry.dirty && !entry.deleted)) return true;
@@ -404,6 +418,7 @@ async function pushOne(rt: SessionRuntime, path: string): Promise<boolean> {
  * (o no hay base), cae a resolución manual (ConflictDialog).
  */
 async function mergeConflict(rt: SessionRuntime, path: string, local: string, server: Doc): Promise<boolean> {
+  if (!rt.api || !rt.index) return true; // sesión local: no entra al motor remoto
   const author = state.sessions[rt.vault].author;
   const entry = rt.index.getEntry(path);
   const base = entry?.base_content;
@@ -461,7 +476,7 @@ async function hydrateFromDisk(rt: SessionRuntime) {
   const disk = await vaultScan(rt.vault);
   const docs: Record<string, Doc> = {};
   for (const f of disk) {
-    const entry = rt.index.getEntry(f.path);
+    const entry = rt.index?.getEntry(f.path);
     const id = entry?.id ?? `local:${f.path}`;
     docs[id] = {
       id,
@@ -484,6 +499,7 @@ async function hydrateFromDisk(rt: SessionRuntime) {
  * Propaga errores de auth (los muestra quien abrió la sesión).
  */
 async function reconcile(rt: SessionRuntime) {
+  if (!rt.api || !rt.index) return; // sesión local: no entra al motor remoto
   const sess = state.sessions[rt.vault];
   if (!sess || sess.syncing) return;
   setState("sessions", rt.vault, { syncing: true, error: null });
@@ -578,7 +594,7 @@ async function reconcile(rt: SessionRuntime) {
 export async function resolveConflictKeepMine(vault: string, path: string) {
   const rt = runtimes.get(vault);
   const sess = state.sessions[vault];
-  if (!rt || !sess) return;
+  if (!rt || !rt.api || !sess) return; // los conflictos solo existen en vaults con server
   const c = sess.conflicts.find((x) => x.path === path);
   if (!c) return;
   setState("sessions", vault, "conflicts", (cs) => cs.filter((x) => x.path !== path));
@@ -619,8 +635,12 @@ export async function resolveConflictKeepServer(vault: string, path: string) {
  * la sesión queda offline e hidrata desde disco; un error de auth propaga (y
  * limpia la sesión a medio abrir). Idempotente: si ya está abierta, no hace nada.
  */
-export async function openSession(opts: { vault: string; serverUrl?: string; token?: string }) {
+export async function openSession(opts: { vault: string; serverUrl?: string | null; token?: string }) {
   if (runtimes.has(opts.vault)) return;
+  if (opts.serverUrl === null) {
+    await openLocalSession(opts.vault);
+    return;
+  }
   const serverUrl = (opts.serverUrl ?? DEFAULT_SERVER).replace(/\/$/, "");
   const api = new BridgesApi(serverUrl);
   api.setToken(opts.token ?? null);
@@ -684,6 +704,25 @@ export async function openSession(opts: { vault: string; serverUrl?: string; tok
   await startSessionSync(rt, serverUrl, opts.token);
 }
 
+/** Abre una sesión LOCAL: disco como verdad, store como espejo. Sin server. */
+async function openLocalSession(vault: string) {
+  const rt: SessionRuntime = {
+    vault,
+    api: null,
+    index: null,
+    flushing: false,
+    bulkConfirmed: false,
+    unsubscribe: null,
+    unwatch: null,
+    debounce: new Map(),
+  };
+  runtimes.set(vault, rt);
+  setState("sessions", vault, { ...freshSession(vault, ""), local: true });
+  await hydrateFromDisk(rt); // index null → ids local:<path>
+  setState("sessions", vault, "ready", true);
+  await startWatch(vault, vault); // watcher; el dispatch local lo rutea scheduleExternal
+}
+
 /**
  * Arranca la sincronización en vivo de una sesión: stream SSE + watcher del
  * vault. En Tauri el stream y el watcher viven en Rust y sus eventos los
@@ -691,6 +730,7 @@ export async function openSession(opts: { vault: string; serverUrl?: string; tok
  * SSE va por fetch-streaming directo de la api.
  */
 async function startSessionSync(rt: SessionRuntime, serverUrl: string, token?: string) {
+  if (!rt.api) return; // solo se llama desde el camino remoto (local arranca su watcher en openLocalSession)
   if (isTauri) {
     await startEventStream(rt.vault, serverUrl, token ?? "");
   } else {
@@ -719,7 +759,7 @@ export async function closeSession(vault: string) {
   rt.debounce.clear();
   await stopEventStream(vault); // no-op en browser
   await stopWatch(vault); // no-op en browser
-  rt.index.clear();
+  rt.index?.clear();
   runtimes.delete(vault);
   setState("sessions", vault, undefined!);
   if (state.activeVault === vault) {
@@ -741,11 +781,19 @@ export async function setActiveVault(vault: string) {
  * "abrir/agregar vault" desde la UI. Propaga errores de auth (los muestra el
  * gestor de conexiones / el diálogo de agregar).
  */
-export async function connect(opts: { vault: string; serverUrl?: string; token?: string }) {
+export async function connect(opts: { vault: string; serverUrl?: string | null; token?: string }) {
   await openSession(opts);
   setState("activeVault", opts.vault);
-  const serverUrl = (opts.serverUrl ?? DEFAULT_SERVER).replace(/\/$/, "");
+  const serverUrl = opts.serverUrl === null ? null : (opts.serverUrl ?? DEFAULT_SERVER).replace(/\/$/, "");
   await persistConnection(opts.vault, serverUrl, opts.token);
+}
+
+/** Elige una carpeta y la abre como vault LOCAL (sin server ni token). false si se canceló. */
+export async function connectLocal(): Promise<boolean> {
+  const vault = await pickVault();
+  if (!vault) return false;
+  await connect({ vault, serverUrl: null });
+  return true;
 }
 
 // --- listeners globales (Tauri) y de red ---
@@ -802,7 +850,7 @@ function setupNetworkListeners() {
 // --- config: conexiones guardadas ---
 
 /** Guarda/actualiza la conexión y la marca como la última usada. No rompe nada si falla. */
-async function persistConnection(vault: string, serverUrl: string, token?: string) {
+async function persistConnection(vault: string, serverUrl: string | null, token?: string) {
   try {
     const cfg = await configLoad();
     const others = cfg.connections.filter((c) => c.vault !== vault);
@@ -867,9 +915,34 @@ function scheduleExternal(rt: SessionRuntime, path: string) {
     path,
     setTimeout(() => {
       rt.debounce.delete(path);
-      enqueuePush(rt, path).catch((e) => setNotice(`Error al sincronizar ${path}: ${e}`));
+      const fn = rt.api === null ? localApplyExternal(rt, path) : enqueuePush(rt, path);
+      fn.catch((e) => setNotice(`Error al sincronizar ${path}: ${e}`));
     }, 400),
   );
+}
+
+/** Cambio externo en un vault local: re-lee el archivo al store (eco suprimido por contenido). */
+async function localApplyExternal(rt: SessionRuntime, path: string) {
+  const content = await vaultRead(rt.vault, path);
+  const id = `local:${path}`;
+  if (content == null) {
+    // borrado/movido afuera
+    setState("sessions", rt.vault, "docs", id, undefined!);
+    return;
+  }
+  const cur = state.sessions[rt.vault].docs[id];
+  if (cur && cur.content === content) return; // eco de nuestra propia escritura
+  setState("sessions", rt.vault, "docs", id, {
+    id,
+    path,
+    title: cur?.title ?? null,
+    content,
+    version: 0,
+    seq: 0,
+    deleted: 0,
+    updated_by: DEFAULT_AUTHOR,
+    updated_at: now(),
+  });
 }
 
 function bumpSeq(rt: SessionRuntime, seq: number) {
@@ -940,12 +1013,44 @@ export type SaveOutcome =
   | { denied: true }
   | { queued: true }; // sin conexión: guardado en disco y encolado para sincronizar
 
+/**
+ * Guardado LOCAL: escribe el .md a disco y espeja el doc en el store (id =
+ * `local:<path>`). Sin versión/seq/conflicto. Si vino con un id viejo cuyo path
+ * cambió, es un move: borra el archivo y el doc viejos.
+ */
+async function localSave(
+  rt: SessionRuntime,
+  doc: { id?: string; path: string; title?: string; content: string },
+): Promise<SaveOutcome> {
+  await vaultWrite(rt.vault, doc.path, doc.content);
+  const id = `local:${doc.path}`;
+  if (doc.id && doc.id !== id) {
+    const oldPath = doc.id.startsWith("local:") ? doc.id.slice("local:".length) : null;
+    if (oldPath) await vaultRemove(rt.vault, oldPath).catch(() => {});
+    setState("sessions", rt.vault, "docs", doc.id, undefined!);
+  }
+  const newDoc: Doc = {
+    id,
+    path: doc.path,
+    title: doc.title ?? null,
+    content: doc.content,
+    version: 0,
+    seq: 0,
+    deleted: 0,
+    updated_by: DEFAULT_AUTHOR,
+    updated_at: now(),
+  };
+  setState("sessions", rt.vault, "docs", id, newDoc);
+  return { ok: true, doc: newDoc };
+}
+
 export async function saveDoc(
   doc: { id?: string; path: string; title?: string; content: string; base_version?: number },
   author?: string,
 ): Promise<SaveOutcome> {
   const rt = activeRuntime();
   if (!rt) return { denied: true };
+  if (rt.api === null) return localSave(rt, doc);
   const sess = state.sessions[rt.vault];
   const who = author ?? sess.author;
   let res;
@@ -1007,9 +1112,18 @@ async function queueLocalDelete(rt: SessionRuntime, id: string) {
   await persistIndex(rt);
 }
 
+/** Borrado LOCAL: manda el .md a la papelera del SO y saca el doc del store. */
+async function localDelete(rt: SessionRuntime, id: string) {
+  const target = state.sessions[rt.vault].docs[id];
+  if (!target) return;
+  await vaultTrash(rt.vault, target.path); // a la papelera del SO (recuperable)
+  setState("sessions", rt.vault, "docs", id, undefined!);
+}
+
 export async function deleteDoc(id: string, author?: string) {
   const rt = activeRuntime();
   if (!rt) return;
+  if (rt.api === null) return localDelete(rt, id);
   const sess = state.sessions[rt.vault];
   const who = author ?? sess.author;
   let doc: Doc;
@@ -1058,7 +1172,7 @@ export function cancelBulkDelete(vault: string) {
 /** Restaura un doc de la papelera y lo refleja en el store + disco. */
 export async function restoreFromTrash(id: string): Promise<boolean> {
   const rt = activeRuntime();
-  if (!rt) return false;
+  if (!rt || !rt.api) return false; // la papelera server-side solo existe en vaults con server
   try {
     const doc = await rt.api.restore(id, state.sessions[rt.vault].author);
     await applyDocs(rt, [doc]); // lo trae de vuelta al árbol y al disco
@@ -1119,6 +1233,28 @@ export function docList(): Doc[] {
   const sess = active();
   if (!sess) return [];
   return Object.values(sess.docs).sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Búsqueda léxica en memoria para vaults locales (insensible a acentos/mayúsculas). */
+export function localSearch(docs: Doc[], q: string): SearchHit[] {
+  const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const nq = norm(q).trim();
+  if (!nq) return [];
+  const scored: { hit: SearchHit; score: number }[] = [];
+  for (const d of docs) {
+    const nTitle = norm(d.title ?? "");
+    const nPath = norm(d.path);
+    const nContent = norm(d.content);
+    const cHits = nContent.split(nq).length - 1;
+    const score =
+      (nTitle.includes(nq) ? 3 : 0) + (nPath.includes(nq) ? 2 : 0) + (cHits > 0 ? 1 + Math.min(cHits, 5) : 0);
+    if (score === 0) continue;
+    const at = nContent.indexOf(nq);
+    const snippet =
+      at >= 0 ? d.content.slice(Math.max(0, at - 30), at + nq.length + 60).replace(/\s+/g, " ").trim() : "";
+    scored.push({ hit: { id: d.id, path: d.path, title: d.title, snippet }, score });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, 50).map((s) => s.hit);
 }
 
 export const [browserMode] = createSignal(!isTauri);

@@ -23,6 +23,7 @@ import {
   Check,
   Boxes,
   Settings,
+  HardDrive,
 } from "lucide-solid";
 import {
   state,
@@ -45,6 +46,7 @@ import {
   resolveConflictKeepServer,
   confirmBulkDelete,
   cancelBulkDelete,
+  localSearch,
 } from "~/lib/store";
 import { buildTree, renderMarkdown, setWikiResolver, parseFrontmatter } from "~/lib/markdown";
 import { buildBacklinks, createResolver, displayName } from "~/lib/links";
@@ -115,6 +117,7 @@ function vaultLabel(localPath: string): string {
 function vaultSyncLabel(vault: string): string {
   const sess = state.sessions[vault];
   if (!sess) return "sin abrir";
+  if (sess.local) return "local";
   if (sess.syncing) return "sincronizando…";
   const queued = sess.pending > 0 ? ` · ${sess.pending} en cola` : "";
   if (!sess.online) return `offline${queued}`;
@@ -127,17 +130,22 @@ const VaultSyncDot: Component<{ vault: string }> = (props) => {
   return (
     <Show when={sess()} fallback={<span class="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40" />}>
       <Show
-        when={sess()!.syncing}
-        fallback={
-          <span
-            class={cn(
-              "h-2 w-2 shrink-0 rounded-full",
-              !sess()!.online ? "bg-destructive" : sess()!.connected ? "bg-emerald-500" : "bg-amber-500",
-            )}
-          />
-        }
+        when={!sess()!.local}
+        fallback={<span class="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/60" />}
       >
-        <RefreshCw class="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+        <Show
+          when={sess()!.syncing}
+          fallback={
+            <span
+              class={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                !sess()!.online ? "bg-destructive" : sess()!.connected ? "bg-emerald-500" : "bg-amber-500",
+              )}
+            />
+          }
+        >
+          <RefreshCw class="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+        </Show>
       </Show>
     </Show>
   );
@@ -192,7 +200,7 @@ const ConnectionManager: Component<{ onAddVault: () => void }> = (props) => {
     }
   };
 
-  const openSaved = async (conn: { vault: string; serverUrl: string; token?: string }) => {
+  const openSaved = async (conn: { vault: string; serverUrl: string | null; token?: string }) => {
     setBusy(conn.vault);
     setErr(null);
     try {
@@ -227,7 +235,7 @@ const ConnectionManager: Component<{ onAddVault: () => void }> = (props) => {
                     <FolderOpen class="h-4 w-4 shrink-0 text-muted-foreground" />
                     <span class="min-w-0">
                       <span class="block truncate text-sm font-medium">{vaultName(conn.vault)}</span>
-                      <span class="block truncate text-xs text-muted-foreground">{conn.serverUrl}</span>
+                      <span class="block truncate text-xs text-muted-foreground">{conn.serverUrl ?? "local"}</span>
                     </span>
                     <Show when={busy() === conn.vault}>
                       <RefreshCw class="ml-auto h-3.5 w-3.5 shrink-0 animate-spin" />
@@ -275,27 +283,33 @@ const SyncStatus: Component = () => {
   const s = () => active();
   return (
     <div class="flex items-center gap-2 text-xs text-muted-foreground">
-      <Show when={s()?.syncing}>
-        <RefreshCw class="h-3.5 w-3.5 animate-spin" />
-        <span>Sincronizando…</span>
+      <Show when={s()?.local}>
+        <HardDrive class="h-3.5 w-3.5" />
+        <span>Local</span>
       </Show>
-      <Show when={s() && !s()!.syncing}>
-        <Show
-          when={s()!.online}
-          fallback={
-            <>
-              <WifiOff class="h-3.5 w-3.5 text-destructive" />
-              <span>
-                Offline{s()!.pending > 0 ? ` · ${s()!.pending} sin sincronizar` : ""}
-              </span>
-            </>
-          }
-        >
-          <Wifi class="h-3.5 w-3.5 text-emerald-500" />
-          <span>
-            {s()!.connected ? "En vivo" : "Conectado"} · seq {s()!.lastSeq}
-            {s()!.pending > 0 ? ` · ${s()!.pending} en cola` : ""}
-          </span>
+      <Show when={!s()?.local}>
+        <Show when={s()?.syncing}>
+          <RefreshCw class="h-3.5 w-3.5 animate-spin" />
+          <span>Sincronizando…</span>
+        </Show>
+        <Show when={s() && !s()!.syncing}>
+          <Show
+            when={s()!.online}
+            fallback={
+              <>
+                <WifiOff class="h-3.5 w-3.5 text-destructive" />
+                <span>
+                  Offline{s()!.pending > 0 ? ` · ${s()!.pending} sin sincronizar` : ""}
+                </span>
+              </>
+            }
+          >
+            <Wifi class="h-3.5 w-3.5 text-emerald-500" />
+            <span>
+              {s()!.connected ? "En vivo" : "Conectado"} · seq {s()!.lastSeq}
+              {s()!.pending > 0 ? ` · ${s()!.pending} en cola` : ""}
+            </span>
+          </Show>
         </Show>
       </Show>
     </div>
@@ -573,8 +587,10 @@ const App: Component = () => {
 
   const onRenameSubmit = async (t: RenameTarget, newPath: string) => {
     setRenameTarget(null);
-    if (t.kind === "file" && t.docId) await moveDoc(t.docId, newPath);
-    else if (t.kind === "folder") await renameFolder(t.path, newPath);
+    if (t.kind === "file" && t.docId) {
+      const res = await moveDoc(t.docId, newPath);
+      if (res && "ok" in res) setSelectedId(res.doc.id); // en local el id cambia con el path
+    } else if (t.kind === "folder") await renameFolder(t.path, newPath);
   };
 
   // Resolución de conflicto.
@@ -611,7 +627,9 @@ const App: Component = () => {
     if (!q.trim()) return setHits([]);
     searchTimer = setTimeout(async () => {
       try {
-        setHits((await activeApi()?.search(q)) ?? []);
+        const sess = active();
+        const results = sess?.local ? localSearch(Object.values(sess.docs), q) : (await activeApi()?.search(q)) ?? [];
+        setHits(results);
       } catch {
         setHits([]);
       }
@@ -686,12 +704,13 @@ const App: Component = () => {
       group: "Acciones",
       run: () => setView(view() === "editor" ? "graph" : "editor"),
     });
-    cmds.push({ id: "sync", label: "Sincronizar ahora", group: "Acciones", run: () => pull() });
+    if (!s()?.local)
+      cmds.push({ id: "sync", label: "Sincronizar ahora", group: "Acciones", run: () => pull() });
     cmds.push({ id: "theme", label: "Cambiar tema (claro/oscuro)", group: "Acciones", run: toggleTheme });
     cmds.push({ id: "settings", label: "Configuración / Tema", group: "Acciones", run: () => setShowSettings(true) });
-    if (s()?.perms.write)
+    if (s()?.perms.write && !s()?.local)
       cmds.push({ id: "trash", label: "Papelera", group: "Acciones", run: () => setShowTrash(true) });
-    if (!s()?.authEnabled || s()?.role === "admin")
+    if (!s()?.local && (!s()?.authEnabled || s()?.role === "admin"))
       cmds.push({ id: "tokens", label: "API keys", group: "Acciones", run: () => setShowTokens(true) });
     if (s()?.isOwner)
       cmds.push({ id: "vaults", label: "Vaults (gestionar)", group: "Acciones", run: () => setShowVaults(true) });
@@ -790,7 +809,7 @@ const App: Component = () => {
             <Button size="sm" variant="ghost" onClick={() => setShowSettings(true)} title="Configuración">
               <Settings class="h-4 w-4" />
             </Button>
-            <Show when={s()?.perms.write}>
+            <Show when={s()?.perms.write && !s()?.local}>
               <Button size="sm" variant="ghost" onClick={() => setShowTrash(true)} title="Papelera">
                 <Trash2 class="h-4 w-4" />
               </Button>
@@ -800,14 +819,16 @@ const App: Component = () => {
                 <Boxes class="h-4 w-4" />
               </Button>
             </Show>
-            <Show when={!s()?.authEnabled || s()?.role === "admin"}>
+            <Show when={!s()?.local && (!s()?.authEnabled || s()?.role === "admin")}>
               <Button size="sm" variant="ghost" onClick={() => setShowTokens(true)} title="API keys">
                 <KeyRound class="h-4 w-4" />
               </Button>
             </Show>
-            <Button size="sm" variant="ghost" onClick={() => pull()} title="Sincronizar ahora">
-              <RefreshCw class="h-4 w-4" />
-            </Button>
+            <Show when={!s()?.local}>
+              <Button size="sm" variant="ghost" onClick={() => pull()} title="Sincronizar ahora">
+                <RefreshCw class="h-4 w-4" />
+              </Button>
+            </Show>
             <Gated when={perms().write} reason={NO_WRITE}>
               <Button
                 size="sm"

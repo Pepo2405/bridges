@@ -61,6 +61,7 @@ La fuente de verdad son **archivos `.md` en disco**. El servidor mantiene la cop
 
 ### Resuelto
 
+- **Vaults locales (offline, sin servidor ni token)**: "Agregar vault" → toggle "Local" → elegís una carpeta y el disco es la verdad, el store su espejo. Sin sync/SSE/índice. La búsqueda corre en memoria sobre las notas cargadas; el borrado va a la **papelera del SO** (recuperable desde Finder/Explorer). Persiste con `serverUrl: null` y se reabre solo. El motor de sync de los vaults con server queda intacto (ver `plans/010-vaults-offline-locales.md`).
 - **Sync en vivo (SSE) en la app de escritorio**: el WKWebView de macOS no entrega respuestas long-lived al JS (ni `EventSource` ni `fetch` streaming) sobre HTTP/2. Se movió el stream a Rust (`start_event_stream` en `src-tauri/src/lib.rs`): abre `/events` con reqwest, parsea el SSE y emite eventos Tauri (`server-change`/`server-status`) que el frontend escucha. En modo browser se usa fetch-streaming.
 - **App empaquetada (.dmg)** para macOS Apple Silicon. Ver [Empaquetar](#empaquetar-dmg).
 - **Auth multi-token con permisos (RBAC)** + deploy con Docker. Ver [Auth](#auth) y [Deploy](#deploy).

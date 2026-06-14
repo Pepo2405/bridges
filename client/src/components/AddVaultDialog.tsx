@@ -1,6 +1,14 @@
 import { type Component, Show, For, createSignal, createEffect } from "solid-js";
 import { FolderOpen } from "lucide-solid";
-import { state, connect, pickVaultAndInspect, importLocalDocs, browserMode, type VaultInspection } from "~/lib/store";
+import {
+  state,
+  connect,
+  connectLocal,
+  pickVaultAndInspect,
+  importLocalDocs,
+  browserMode,
+  type VaultInspection,
+} from "~/lib/store";
 import {
   Dialog,
   DialogContent,
@@ -11,6 +19,7 @@ import {
 } from "~/components/ui/dialog";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { cn } from "~/lib/utils";
 
 const DEFAULT_SERVER = "http://localhost:4321";
 
@@ -22,6 +31,7 @@ const DEFAULT_SERVER = "http://localhost:4321";
 export const AddVaultDialog: Component<{ open: boolean; onOpenChange: (o: boolean) => void }> = (props) => {
   const [serverUrl, setServerUrl] = createSignal(DEFAULT_SERVER);
   const [token, setToken] = createSignal("");
+  const [local, setLocal] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
   const [pending, setPending] = createSignal<VaultInspection | null>(null);
@@ -31,6 +41,7 @@ export const AddVaultDialog: Component<{ open: boolean; onOpenChange: (o: boolea
     if (props.open) {
       setServerUrl(state.connections[0]?.serverUrl ?? DEFAULT_SERVER);
       setToken("");
+      setLocal(false);
       setErr(null);
       setPending(null);
     }
@@ -49,6 +60,21 @@ export const AddVaultDialog: Component<{ open: boolean; onOpenChange: (o: boolea
         await connect({ vault: insp.vault, serverUrl: insp.serverUrl, token: insp.token });
         props.onOpenChange(false);
       }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Vault local: elegir carpeta y conectar sin server ni token.
+  const addLocal = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const ok = await connectLocal();
+      if (!ok) setErr("No elegiste ninguna carpeta.");
+      else props.onOpenChange(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -79,33 +105,61 @@ export const AddVaultDialog: Component<{ open: boolean; onOpenChange: (o: boolea
           <DialogHeader>
             <DialogTitle>Agregar vault</DialogTitle>
             <DialogDescription>
-              {browserMode()
-                ? "Modo browser: los archivos no se escriben a disco."
-                : "Elegí una carpeta y el servidor al que sincroniza. La carpeta también la lee Claude Code."}
+              {local()
+                ? "Vault local: los archivos viven solo en tu disco, sin servidor ni token."
+                : browserMode()
+                  ? "Modo browser: los archivos no se escriben a disco."
+                  : "Elegí una carpeta y el servidor al que sincroniza. La carpeta también la lee Claude Code."}
             </DialogDescription>
           </DialogHeader>
 
-          <div class="space-y-2">
-            <label class="text-xs font-medium text-muted-foreground" for="add-server">
-              Servidor
-            </label>
-            <Input
-              id="add-server"
-              value={serverUrl()}
-              onInput={(e) => setServerUrl(e.currentTarget.value)}
-              placeholder={DEFAULT_SERVER}
-            />
-            <label class="text-xs font-medium text-muted-foreground" for="add-token">
-              Token <span class="font-normal">(si el server lo pide)</span>
-            </label>
-            <Input
-              id="add-token"
-              type="password"
-              value={token()}
-              onInput={(e) => setToken(e.currentTarget.value)}
-              placeholder="fg_…"
-            />
+          {/* Toggle de modo: con servidor (sync) vs local (solo disco). */}
+          <div class="flex items-center rounded-md border p-0.5">
+            <button
+              type="button"
+              onClick={() => setLocal(false)}
+              class={cn(
+                "flex-1 rounded px-2 py-1 text-xs transition-colors",
+                !local() ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Con servidor
+            </button>
+            <button
+              type="button"
+              onClick={() => setLocal(true)}
+              class={cn(
+                "flex-1 rounded px-2 py-1 text-xs transition-colors",
+                local() ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Local (sin servidor)
+            </button>
           </div>
+
+          <Show when={!local()}>
+            <div class="space-y-2">
+              <label class="text-xs font-medium text-muted-foreground" for="add-server">
+                Servidor
+              </label>
+              <Input
+                id="add-server"
+                value={serverUrl()}
+                onInput={(e) => setServerUrl(e.currentTarget.value)}
+                placeholder={DEFAULT_SERVER}
+              />
+              <label class="text-xs font-medium text-muted-foreground" for="add-token">
+                Token <span class="font-normal">(si el server lo pide)</span>
+              </label>
+              <Input
+                id="add-token"
+                type="password"
+                value={token()}
+                onInput={(e) => setToken(e.currentTarget.value)}
+                placeholder="fg_…"
+              />
+            </div>
+          </Show>
 
           <Show when={err()}>
             <p class="text-sm text-destructive">{err()}</p>
@@ -115,9 +169,9 @@ export const AddVaultDialog: Component<{ open: boolean; onOpenChange: (o: boolea
             <Button variant="ghost" onClick={() => props.onOpenChange(false)} disabled={busy()}>
               Cancelar
             </Button>
-            <Button onClick={addNew} disabled={busy()}>
+            <Button onClick={local() ? addLocal : addNew} disabled={busy()}>
               <FolderOpen class="h-4 w-4" />
-              {browserMode() ? "Conectar (modo browser)" : "Elegir carpeta y conectar"}
+              {local() ? "Elegir carpeta" : browserMode() ? "Conectar (modo browser)" : "Elegir carpeta y conectar"}
             </Button>
           </DialogFooter>
         </DialogContent>
