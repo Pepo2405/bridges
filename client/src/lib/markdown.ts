@@ -1,4 +1,5 @@
 import { marked, type TokenizerAndRendererExtension } from "marked";
+import DOMPurify from "dompurify";
 import { normalizeTarget, linkAlias, type Resolver } from "./links";
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -91,7 +92,10 @@ export function parseFrontmatter(md: string): Property[] {
 }
 
 export function renderMarkdown(md: string): string {
-  return marked.parse(stripFrontmatter(md)) as string;
+  const html = marked.parse(stripFrontmatter(md)) as string;
+  // Sanitiza: DOMPurify conserva class y data-* (los usa el click del preview)
+  // y elimina <script>, handlers inline (onerror=...), iframes, etc.
+  return DOMPurify.sanitize(html);
 }
 
 export type TreeNode = {
