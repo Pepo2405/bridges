@@ -169,7 +169,27 @@ describe("server con auth (admin bootstrap)", () => {
     expect(history.length).toBe(2);
     expect(history[0].action).toBe("update");
     expect(history[1].action).toBe("create");
-    expect(history[0].author).toBe("t");
+    // El author sale del token (admin), no del body ("t") — ver test "no spoofing".
+    expect(history[0].author).toBe("admin");
+  });
+
+  test("el author del historial sale del token, no del body (no spoofing)", async () => {
+    const created = await (
+      await fetch(`${base}/documents`, {
+        method: "POST",
+        headers: jsonHeaders(ADMIN),
+        body: JSON.stringify({ path: "spoof.md", content: "v1", author: "victima" }),
+      })
+    ).json();
+    const { history } = await (
+      await fetch(`${base}/documents/${created.id}/history`, { headers: bearer(ADMIN) })
+    ).json();
+    expect(history[0].author).toBe("admin"); // el nombre del token, no "victima"
+    expect(history[0].author).not.toBe("victima");
+    // updated_by del doc también debe ser el del token
+    const sync = await (await fetch(`${base}/sync?since=0`, { headers: bearer(ADMIN) })).json();
+    const doc = sync.documents.find((d: any) => d.path === "spoof.md");
+    expect(doc.updated_by).toBe("admin");
   });
 
   test("versions devuelve el snapshot de contenido de cada cambio", async () => {

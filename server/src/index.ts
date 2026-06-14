@@ -93,6 +93,11 @@ const server = Bun.serve({
     // Vault del request: el del token (o `default` si la auth está apagada).
     const vault = identity?.vault ?? "default";
 
+    // Autor de un cambio: si la request está autenticada, manda el nombre del token
+    // (no se confía en lo que mande el cliente); sin auth, cae al valor del cliente.
+    const authorFrom = (clientValue: string | null | undefined): string | null =>
+      identity?.name ?? clientValue ?? null;
+
     // --- Identidad: GET /whoami → permisos + vault del token actual ---
     if (pathname === "/whoami" && req.method === "GET") {
       const enabled = authEnabled();
@@ -246,7 +251,7 @@ const server = Bun.serve({
           path: body.path,
           title: body.title ?? null,
           content: body.content,
-          author: body.author ?? null,
+          author: authorFrom(body.author),
         });
         broadcastChange(vault, doc.seq);
         return json(doc, 201);
@@ -274,7 +279,7 @@ const server = Bun.serve({
     const restoreMatch = pathname.match(/^\/documents\/([^/]+)\/restore$/);
     if (restoreMatch && req.method === "POST") {
       try {
-        const doc = restoreDoc(vault, decodeURIComponent(restoreMatch[1]), req.headers.get("x-author"));
+        const doc = restoreDoc(vault, decodeURIComponent(restoreMatch[1]), authorFrom(req.headers.get("x-author")));
         broadcastChange(vault, doc.seq);
         return json(doc);
       } catch (e) {
@@ -301,7 +306,7 @@ const server = Bun.serve({
             title: body.title ?? null,
             content: body.content,
             base_version: body.base_version,
-            author: body.author ?? null,
+            author: authorFrom(body.author),
           });
           broadcastChange(vault, doc.seq);
           return json(doc);
@@ -323,7 +328,7 @@ const server = Bun.serve({
           );
         }
         try {
-          const doc = deleteDoc(vault, id, req.headers.get("x-author"));
+          const doc = deleteDoc(vault, id, authorFrom(req.headers.get("x-author")));
           recordDelete(vault);
           broadcastChange(vault, doc.seq);
           return json(doc);
