@@ -1,28 +1,39 @@
 # bridges-mcp
 
-Servidor MCP que expone la búsqueda del bridges-server como una tool para agentes
-(Claude Code). En vez de grepear el vault en disco —que a escala devuelve miles
-de hits sin ordenar— el agente llama `search_vault` y recibe los resultados ya
-**rankeados por relevancia (BM25)** con snippets, y abre solo los `.md`
-pertinentes.
+Servidor MCP **de solo lectura** que expone el vault del bridges-server a agentes
+(Claude Code): búsqueda rankeada, lectura de notas y navegación por el grafo de
+wikilinks. En vez de grepear el vault en disco —que a escala devuelve miles de
+hits sin ordenar— el agente busca con `search_vault` (resultados ya **rankeados
+por relevancia (BM25)** con snippets), abre la nota que le sirve y salta por sus
+backlinks/links. No escribe nada: las cuatro tools son read-only.
 
-La búsqueda puede correr de dos formas:
+Las tools pueden correr de dos formas:
 
-- **Índice local** (si `BRIDGES_VAULT_DIR` está seteado): FTS5 construido desde la
-  réplica de `.md` en disco. ~sub-ms por query, **offline y sin token**. Se
-  mantiene fresco con mtime-sweep (reindexa solo lo que cambió en cada búsqueda).
-  Espeja el índice del server (mismas columnas, tokenizer y pesos BM25) → ranking
-  idéntico al remoto.
-- **HTTP al server** (fallback): `GET /search`. Es lo que se usa si no hay
-  `BRIDGES_VAULT_DIR`, si se fuerza con `BRIDGES_LOCAL_SEARCH=0`, o si el índice local
-  falla.
+- **Local** (si `BRIDGES_VAULT_DIR` está seteado): lee de la réplica de `.md` en
+  disco. La búsqueda usa un índice FTS5 (~sub-ms por query, **offline y sin
+  token**) que se mantiene fresco con mtime-sweep (reindexa solo lo que cambió en
+  cada búsqueda) y espeja el índice del server (mismas columnas, tokenizer y pesos
+  BM25 → ranking idéntico al remoto). `read_note`/`get_backlinks`/`list_links` leen
+  los `.md` directo del disco.
+- **HTTP al server** (si no hay `BRIDGES_VAULT_DIR`, si se fuerza con
+  `BRIDGES_LOCAL_SEARCH=0`, o si el índice local falla): la búsqueda va por
+  `GET /search`; la lectura y el grafo tiran de `GET /sync` (trae el vault y filtra
+  por path). A ~70 docs es un round-trip; el modo local no necesita esto.
 
-## Tool
+## Tools
 
-- **`search_vault(query, limit?)`** — busca `query` (texto libre) y devuelve hasta
-  `limit` resultados (default 10), cada uno con `path`, `title`, `snippet` y —si
-  `BRIDGES_VAULT_DIR` está seteado— la ruta **absoluta local** del `.md`. El agente
-  lee la nota completa del disco con `Read`; el MCP no trae el contenido por HTTP.
+- **`search_vault(query, limit?, pathPrefix?)`** — busca `query` (texto libre) y
+  devuelve hasta `limit` resultados (default 10), cada uno con `path`, `title` y un
+  `snippet` (30 tokens) y —en modo local— la ruta **absoluta local** del `.md`.
+  `pathPrefix` filtra a notas cuyo path empieza con ese prefijo (p. ej.
+  `'01 - Proyectos/'`). Ya viene ordenado por relevancia: usalo en vez de grepear.
+- **`read_note(path)`** — devuelve el **contenido completo** de una nota por su path
+  relativo. En modo local lo lee del disco (con guard anti-traversal); en modo HTTP
+  lo trae de `/sync`. Cierra el agujero de que en HTTP el agente solo veía el snippet.
+- **`get_backlinks(path)`** — lista las notas que **enlazan** a `path` (vía
+  `[[wikilinks]]`). El diferencial sobre grep: navegás el grafo, no el texto.
+- **`list_links(path)`** — lista las notas a las que `path` **enlaza**, marcando los
+  links rotos (sin nota destino).
 
 ## Config (env)
 
@@ -58,4 +69,12 @@ Verificá con `claude mcp list` y, dentro de Claude Code, `/mcp`.
 ```sh
 cd mcp && bun install
 BRIDGES_URL=http://localhost:4321 bun run src/index.ts   # habla MCP por stdio
+```
+
+## Tests y typecheck
+
+```sh
+cd mcp
+bun test            # tests de localIndex (sweep/prefix/acentos/ranking) y graph (wikilinks)
+bunx tsc --noEmit   # typecheck (strict)
 ```

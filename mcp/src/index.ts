@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 /**
- * Servidor MCP para Bridges: expone la búsqueda full-text (FTS5/BM25) del
- * bridges-server como una tool `search_vault` que un agente (Claude Code) puede
- * llamar en vez de grepear el vault en disco. Devuelve los resultados ya
- * rankeados por relevancia con snippets, así el agente abre pocos archivos
- * pertinentes en lugar de cientos de hits sin ordenar.
+ * Servidor MCP de SOLO LECTURA para Bridges: expone el vault del bridges-server a
+ * un agente (Claude Code) con cuatro tools, así no tiene que grepear el disco:
+ *   - search_vault   búsqueda full-text rankeada (FTS5/BM25) con snippets
+ *   - read_note      contenido completo de una nota por su path
+ *   - get_backlinks  notas que enlazan a una (grafo de [[wikilinks]])
+ *   - list_links     notas a las que una enlaza (con links rotos marcados)
+ * Cada tool corre contra el disco local (si hay BRIDGES_VAULT_DIR) o por HTTP.
  *
  * Config por env:
  *   BRIDGES_URL          base del server (default http://localhost:4321)
