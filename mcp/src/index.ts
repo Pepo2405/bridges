@@ -36,11 +36,15 @@ server.registerTool(
     inputSchema: {
       query: z.string().min(1).describe("Términos a buscar (texto libre)."),
       limit: z.number().int().min(1).max(50).optional().describe("Máximo de resultados (default 10)."),
+      pathPrefix: z
+        .string()
+        .optional()
+        .describe("Filtra los resultados a notas cuyo path empieza con este prefijo (p. ej. '01 - Proyectos/')."),
     },
   },
-  async ({ query, limit }) => {
+  async ({ query, limit, pathPrefix }) => {
     try {
-      const hits = await searchVault(query, limit ?? 10);
+      const hits = await searchVault(query, limit ?? 10, pathPrefix);
       if (!hits.length) {
         return { content: [{ type: "text", text: `Sin resultados para "${query}".` }] };
       }

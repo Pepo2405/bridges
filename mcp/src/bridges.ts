@@ -6,7 +6,8 @@ import { searchLocal, walkMd } from "./localIndex";
 import type { DocLite } from "./graph";
 
 export type SearchHit = {
-  id: string;
+  /** Id del doc (solo modo HTTP; el modo local identifica por path). Opcional, no se expone al agente. */
+  id?: string;
   path: string;
   title: string | null;
   snippet: string;
@@ -47,16 +48,24 @@ async function searchHttp(query: string, limit: number): Promise<SearchHit[]> {
   }));
 }
 
-export async function searchVault(query: string, limit: number): Promise<SearchHit[]> {
+export async function searchVault(query: string, limit: number, pathPrefix?: string): Promise<SearchHit[]> {
+  // Con filtro de path traemos el cap de resultados crudos (50) y recortamos a
+  // `limit` después de filtrar; sin filtro, pedimos directamente `limit`.
+  const fetchN = pathPrefix ? 50 : limit;
+  let hits: SearchHit[];
   if (USE_LOCAL) {
     try {
-      return searchLocal(VAULT_DIR!, query, limit);
+      hits = searchLocal(VAULT_DIR!, query, fetchN);
     } catch (e) {
       // El índice local falló (dir inaccesible, etc.): caemos al server por HTTP.
       console.error(`[bridges-mcp] índice local falló, usando HTTP: ${e instanceof Error ? e.message : e}`);
+      hits = await searchHttp(query, fetchN);
     }
+  } else {
+    hits = await searchHttp(query, fetchN);
   }
-  return searchHttp(query, limit);
+  if (pathPrefix) hits = hits.filter((h) => h.path.startsWith(pathPrefix));
+  return hits.slice(0, limit);
 }
 
 /**

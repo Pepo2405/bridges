@@ -45,9 +45,9 @@ function init() {
   );
   qIns = db.query(`INSERT INTO fts(rowid, title, path, content) VALUES (?, ?, ?, ?)`);
   qDel = db.query(`DELETE FROM fts WHERE rowid = ?`);
-  // snippet sobre col idx 2 (content), igual que el server.
+  // snippet sobre col idx 2 (content), igual que el server (30 tokens).
   qSearch = db.query(
-    `SELECT path, title, snippet(fts, 2, '', '', '…', 12) AS snippet
+    `SELECT path, title, snippet(fts, 2, '', '', '…', 30) AS snippet
      FROM fts WHERE fts MATCH ?1 ORDER BY ${BM25} LIMIT ?2`,
   );
 }
@@ -97,7 +97,6 @@ export function searchLocal(vaultDir: string, query: string, limit: number): Sea
   if (!match) return [];
   const rows = qSearch.all(match, limit) as Row[];
   return rows.map((r) => ({
-    id: "",
     path: r.path,
     title: r.title,
     snippet: r.snippet,
