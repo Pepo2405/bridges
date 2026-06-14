@@ -19,7 +19,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { searchVault } from "./bridges";
+import { searchVault, readNote } from "./bridges";
 
 const server = new McpServer({ name: "bridges-mcp", version: "0.1.0" });
 
@@ -49,6 +49,39 @@ server.registerTool(
       return { content: [{ type: "text", text: `${hits.length} resultado(s) para "${query}":\n\n${text}` }] };
     } catch (e) {
       return { isError: true, content: [{ type: "text", text: `Error al buscar: ${e instanceof Error ? e.message : String(e)}` }] };
+    }
+  },
+);
+
+server.registerTool(
+  "read_note",
+  {
+    title: "Leer una nota del vault de Bridges",
+    description:
+      "Devuelve el contenido completo de una nota del vault por su ruta relativa " +
+      "(la que devuelve search_vault). En modo local lee del disco; en modo HTTP la " +
+      "trae del server. Usalo para leer una nota entera después de encontrarla con " +
+      "search_vault (en modo HTTP search_vault solo da el snippet).",
+    inputSchema: {
+      path: z
+        .string()
+        .min(1)
+        .describe("Ruta relativa de la nota dentro del vault, p. ej. '01 - Proyectos/forge/index.md'."),
+    },
+  },
+  async ({ path }) => {
+    try {
+      const note = await readNote(path);
+      if (!note) {
+        return { content: [{ type: "text", text: `No existe la nota "${path}".` }] };
+      }
+      const header = `${note.title ?? note.path}\n${note.localPath ?? note.path}\n\n`;
+      return { content: [{ type: "text", text: header + note.content }] };
+    } catch (e) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error al leer "${path}": ${e instanceof Error ? e.message : String(e)}` }],
+      };
     }
   },
 );

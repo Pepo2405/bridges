@@ -1,5 +1,7 @@
-/** Búsqueda del vault: índice FTS local (si hay BRIDGES_VAULT_DIR) o HTTP al server. */
-import { join } from "node:path";
+/** Acceso al vault: índice/disco local (si hay BRIDGES_VAULT_DIR) o HTTP al server. */
+import { readFileSync } from "node:fs";
+import { join, normalize, sep } from "node:path";
+import { deriveTitle } from "../../server/src/search-common";
 import { searchLocal } from "./localIndex";
 
 export type SearchHit = {
@@ -10,6 +12,18 @@ export type SearchHit = {
   /** Ruta absoluta en disco, si BRIDGES_VAULT_DIR está seteado. El agente la abre con Read. */
   localPath?: string;
 };
+
+/** Contenido completo de una nota (lo que devuelve read_note). */
+export type NoteContent = {
+  path: string;
+  title: string | null;
+  content: string;
+  /** Ruta absoluta en disco, si la nota se leyó del índice local. */
+  localPath?: string;
+};
+
+/** Doc del vault (forma mínima que devuelve GET /sync). */
+type SyncDoc = { id: string; path: string; title: string | null; content: string; deleted: number };
 
 const BASE = (process.env.BRIDGES_URL ?? "http://localhost:4321").replace(/\/+$/, "");
 const TOKEN = process.env.BRIDGES_TOKEN;
@@ -42,4 +56,55 @@ export async function searchVault(query: string, limit: number): Promise<SearchH
     }
   }
   return searchHttp(query, limit);
+}
+
+/**
+ * Resuelve un path relativo dentro de VAULT_DIR bloqueando traversal (../). Mismo
+ * enfoque que server/src/vault.ts:resolveInVault. Lanza si el path escapa el vault.
+ */
+function resolveInVault(vaultDir: string, relPath: string): string {
+  const clean = normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, "");
+  const abs = join(vaultDir, clean);
+  const root = normalize(vaultDir + sep);
+  if (!normalize(abs + sep).startsWith(root) && abs !== normalize(vaultDir)) {
+    throw new Error(`el path escapa el vault: ${relPath}`);
+  }
+  return abs;
+}
+
+/** Trae todos los docs vivos del vault por HTTP (GET /sync?since=0). */
+async function fetchSyncDocs(): Promise<SyncDoc[]> {
+  const headers: Record<string, string> = {};
+  if (TOKEN) headers.authorization = `Bearer ${TOKEN}`;
+  const res = await fetch(`${BASE}/sync?since=0`, { headers });
+  if (!res.ok) throw new Error(`${BASE}/sync → HTTP ${res.status}`);
+  const data = (await res.json()) as { documents?: SyncDoc[] };
+  return (data.documents ?? []).filter((d) => !d.deleted);
+}
+
+/** Lee una nota del disco local. null si no existe; lanza si el path escapa el vault. */
+function readNoteLocal(vaultDir: string, path: string): NoteContent | null {
+  const abs = resolveInVault(vaultDir, path);
+  let content: string;
+  try {
+    content = readFileSync(abs, "utf8");
+  } catch {
+    return null; // no existe o no se puede leer
+  }
+  return { path, title: deriveTitle(content, path), content, localPath: abs };
+}
+
+/** Lee una nota por HTTP filtrando /sync por path. null si no existe. */
+async function readNoteHttp(path: string): Promise<NoteContent | null> {
+  const doc = (await fetchSyncDocs()).find((d) => d.path === path);
+  return doc ? { path: doc.path, title: doc.title, content: doc.content } : null;
+}
+
+/**
+ * Lee el contenido completo de una nota por su path relativo. Modo local lee del
+ * disco; modo HTTP la trae de /sync. Mismo flag que la búsqueda (USE_LOCAL).
+ */
+export async function readNote(path: string): Promise<NoteContent | null> {
+  if (USE_LOCAL) return readNoteLocal(VAULT_DIR!, path);
+  return readNoteHttp(path);
 }
