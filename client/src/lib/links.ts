@@ -41,6 +41,22 @@ export function createResolver(docs: Doc[]): Resolver {
   };
 }
 
+/** Headings (texto, sin los #) de un contenido markdown, ignorando bloques de código. */
+export function parseHeadings(content: string): string[] {
+  const out: string[] = [];
+  let inFence = false;
+  for (const ln of content.split("\n")) {
+    if (/^```/.test(ln)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(ln);
+    if (m) out.push(m[1].trim());
+  }
+  return out;
+}
+
 /** Targets de wikilink (normalizados) que aparecen en un contenido. */
 export function parseWikilinks(content: string): string[] {
   const out: string[] = [];

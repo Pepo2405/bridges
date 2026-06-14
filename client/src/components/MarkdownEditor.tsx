@@ -8,13 +8,28 @@ import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { tags as t } from "@lezer/highlight";
 
-export type LinkTarget = { label: string; path: string };
+export type LinkTarget = { label: string; path: string; headings?: string[] };
 
-/** Autocompletado de [[wikilinks]]: al tipear `[[` ofrece los nombres de notas. */
+/**
+ * Autocompletado de [[wikilinks]]: al tipear `[[` ofrece nombres de notas, y tras
+ * `[[Nota#` ofrece los headings de esa nota (estilo Obsidian).
+ */
 function wikilinkCompletions(targets: () => LinkTarget[]) {
   return (ctx: CompletionContext): CompletionResult | null => {
     const before = ctx.matchBefore(/\[\[[^\]\n]*$/); // `[[` seguido de lo tipeado, sin cerrar
     if (!before) return null;
+    const typed = before.text.slice(2); // lo que va después de `[[`
+    const hashAt = typed.lastIndexOf("#");
+    if (hashAt >= 0) {
+      // `[[Nota#…`: ofrecer los headings de esa nota.
+      const notePart = typed.slice(0, hashAt).trim().toLowerCase();
+      const target = targets().find((t) => t.label.toLowerCase() === notePart);
+      return {
+        from: before.from + 2 + hashAt + 1, // justo después del `#`
+        options: (target?.headings ?? []).map((h) => ({ label: h, apply: h + "]]" })),
+        validFor: /^[^\]\n]*$/,
+      };
+    }
     return {
       from: before.from + 2, // justo después de `[[`
       options: targets().map((it) => ({

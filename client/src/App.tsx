@@ -50,7 +50,7 @@ import {
 } from "~/lib/store";
 import { decideEditorSync } from "~/lib/editorSync";
 import { buildTree, renderMarkdown, setWikiResolver, parseFrontmatter } from "~/lib/markdown";
-import { buildBacklinks, createResolver, displayName } from "~/lib/links";
+import { buildBacklinks, createResolver, displayName, parseHeadings } from "~/lib/links";
 import type { Doc, SearchHit } from "~/lib/api";
 import { FileTree, type TreeAction } from "~/components/FileTree";
 import type { TreeNode } from "~/lib/markdown";
@@ -680,6 +680,12 @@ const App: Component = () => {
     return out;
   });
 
+  // Targets de autocompletado de [[wikilinks]]: nombre + headings de cada nota.
+  // Memoizado por docs() para no re-parsear headings en cada tecla.
+  const linkTargets = createMemo(() =>
+    docs().map((d) => ({ label: displayName(d.path), path: d.path, headings: parseHeadings(d.content) })),
+  );
+
   // Click en el preview: un #tag busca por ese tag; un [[wikilink]] navega a la nota.
   const onPreviewClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -1096,7 +1102,7 @@ const App: Component = () => {
                       <MarkdownEditor
                         value={draft()}
                         readOnly={!perms().write}
-                        linkTargets={() => docs().map((d) => ({ label: displayName(d.path), path: d.path }))}
+                        linkTargets={linkTargets}
                         onChange={(v) => {
                           setDraft(v);
                           setDirty(true);
