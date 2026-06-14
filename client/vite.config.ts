@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 import { resolve } from "node:path";
@@ -16,5 +17,10 @@ export default defineConfig({
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
+  },
+  // Vitest: el reconcile es lógica pura → entorno node, sin DOM.
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts"],
   },
 });
