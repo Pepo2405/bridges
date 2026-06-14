@@ -204,14 +204,14 @@ fn start_watch(
         .map_err(|e| e.to_string())?;
 
     // reemplaza (y por ende dropea/detiene) cualquier watcher anterior de esta conn
-    state.0.lock().unwrap().insert(conn_id, watcher);
+    state.0.lock().unwrap_or_else(|e| e.into_inner()).insert(conn_id, watcher);
     Ok(())
 }
 
 /// Detiene el watcher de una conexión (dropea su entrada del mapa).
 #[tauri::command]
 fn stop_watch(state: State<WatcherState>, conn_id: String) {
-    state.0.lock().unwrap().remove(&conn_id);
+    state.0.lock().unwrap_or_else(|e| e.into_inner()).remove(&conn_id);
 }
 
 fn state_path(vault: &str) -> PathBuf {
@@ -321,7 +321,7 @@ fn secret_delete(account: String) -> Result<(), String> {
 /// Detiene el stream SSE de una conexión (invalida su generación).
 #[tauri::command]
 fn stop_event_stream(state: State<StreamState>, conn_id: String) {
-    if let Some(g) = state.0.lock().unwrap().get(&conn_id) {
+    if let Some(g) = state.0.lock().unwrap_or_else(|e| e.into_inner()).get(&conn_id) {
         g.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -340,7 +340,7 @@ fn start_event_stream(
     token: String,
 ) {
     let generation = {
-        let mut map = state.0.lock().unwrap();
+        let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
         map.entry(conn_id.clone()).or_default().clone()
     };
     let my_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;

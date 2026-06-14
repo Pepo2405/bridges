@@ -4,7 +4,7 @@
  * en SQLite (se guarda el hash, no el token en claro). `BRIDGES_TOKEN` (env) es el
  * "server owner": admin del vault `default` y con poderes cross-vault.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { db } from "./db";
 
 export type Role = "viewer" | "editor" | "admin";
@@ -24,6 +24,10 @@ const ROLE_PERMS: Record<Role, Perm[]> = {
 // La tabla `tokens` la crea db.ts (esquema multi-vault) / la migración.
 
 const hash = (t: string) => createHash("sha256").update(t).digest("hex");
+
+/** Compara dos secretos en tiempo constante (hashea a 32 bytes: sin fuga de largo). */
+const sameSecret = (a: string, b: string): boolean =>
+  timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
 
 const qIdentByHash = db.query<{ name: string; role: Role; vault: string }, [string]>(
   "SELECT name, role, vault FROM tokens WHERE token_hash = ?",
@@ -47,7 +51,8 @@ export function authEnabled(): boolean {
 /** Identidad del token, o null si es inválido. */
 export function identityForToken(token: string | null): Identity | null {
   if (!token) return null;
-  if (BOOTSTRAP && token === BOOTSTRAP) return { name: "admin", role: "admin", vault: "default", isOwner: true };
+  if (BOOTSTRAP && sameSecret(token, BOOTSTRAP))
+    return { name: "admin", role: "admin", vault: "default", isOwner: true };
   const row = qIdentByHash.get(hash(token));
   return row ? { ...row, isOwner: false } : null;
 }

@@ -111,7 +111,7 @@ bun run src/seed.ts     # datos de ejemplo (opcional)
 bun run dev             # http://localhost:4321
 ```
 
-Variables de entorno: `PORT`, `BRIDGES_DB`, `BRIDGES_VAULT`, `BRIDGES_TOKEN` (auth simple opcional).
+Variables de entorno: `PORT` (4321), `BRIDGES_DB`, `BRIDGES_VAULT`, `BRIDGES_TOKEN` (auth simple opcional), `BRIDGES_DELETE_LIMIT` (10) y `BRIDGES_DELETE_WINDOW` (60, en segundos) — umbral/ventana de la guardia anti-vaciado.
 
 ### Cliente (escritorio)
 
