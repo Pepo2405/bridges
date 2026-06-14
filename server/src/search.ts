@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { toMatchQuery } from "./search-common";
 
 export type SearchHit = {
   id: string;
@@ -23,19 +24,6 @@ const qSearch = db.query<
    ORDER BY bm25(documents_fts, 10.0, 5.0, 1.0)
    LIMIT 50`,
 );
-
-/**
- * Convierte el texto libre del usuario en una query MATCH segura de FTS5.
- * Tokeniza por letras/números (descarta la sintaxis especial de FTS5: comillas,
- * `*`, `:`, `AND/OR/NOT`, etc.), envuelve cada token en comillas y le agrega `*`
- * para prefix-match (búsqueda mientras se tipea). AND implícito entre tokens.
- * Devuelve "" si no quedan tokens.
- */
-function toMatchQuery(query: string): string {
-  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu);
-  if (!tokens?.length) return "";
-  return tokens.map((t) => `"${t}"*`).join(" ");
-}
 
 /** Búsqueda full-text (FTS5/BM25) sobre el índice de un vault. */
 export function searchDocs(vault: string, query: string): SearchHit[] {

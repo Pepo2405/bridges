@@ -17,6 +17,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { toMatchQuery, deriveTitle, FTS_TOKENIZER } from "../../server/src/search-common";
 import type { SearchHit } from "./bridges";
 
 // Pesos BM25 por columna (title, path, content), idénticos a search.ts del server.
@@ -40,7 +41,7 @@ function init() {
   // así que el contenido vive en el propio índice. A esta escala el ~2x de tamaño
   // es irrelevante.
   db.run(
-    `CREATE VIRTUAL TABLE fts USING fts5(title, path, content, tokenize="unicode61 remove_diacritics 2")`,
+    `CREATE VIRTUAL TABLE fts USING fts5(title, path, content, tokenize="${FTS_TOKENIZER}")`,
   );
   qIns = db.query(`INSERT INTO fts(rowid, title, path, content) VALUES (?, ?, ?, ?)`);
   qDel = db.query(`DELETE FROM fts WHERE rowid = ?`);
@@ -49,14 +50,6 @@ function init() {
     `SELECT path, title, snippet(fts, 2, '', '', '…', 12) AS snippet
      FROM fts WHERE fts MATCH ?1 ORDER BY ${BM25} LIMIT ?2`,
   );
-}
-
-/** Igual que deriveTitle del server: primer H1, si no el filename sin .md. */
-function deriveTitle(content: string, path: string): string {
-  const heading = content.match(/^#\s+(.+)$/m);
-  if (heading) return heading[1].trim();
-  const base = path.split("/").pop() ?? path;
-  return base.replace(/\.md$/i, "");
 }
 
 /** Paths relativos de los .md bajo `dir` (recursivo, ignora ocultos como .obsidian/.git). */
@@ -94,17 +87,6 @@ function sweep(vaultDir: string) {
     rowids.delete(rel);
     mtimes.delete(rel);
   }
-}
-
-/**
- * Convierte texto libre en una query MATCH de FTS5. Idéntica a toMatchQuery del
- * server: tokeniza por letras/números, envuelve en comillas y agrega `*` para
- * prefix-match. AND implícito entre tokens. "" si no quedan tokens.
- */
-function toMatchQuery(query: string): string {
-  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu);
-  if (!tokens?.length) return "";
-  return tokens.map((t) => `"${t}"*`).join(" ");
 }
 
 /** Búsqueda full-text contra el índice local, manteniéndolo fresco antes de consultar. */

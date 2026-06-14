@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { writeDoc, removeDoc } from "./vault";
 import { migrate } from "./migrate";
+import { deriveTitle, FTS_TOKENIZER } from "./search-common";
 
 const DB_PATH = process.env.BRIDGES_DB ?? "bridges.db";
 
@@ -81,7 +82,7 @@ db.exec(`
   CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     title, path, content,
     content='documents', content_rowid='rowid',
-    tokenize="unicode61 remove_diacritics 2"
+    tokenize="${FTS_TOKENIZER}"
   );
 
   CREATE TRIGGER IF NOT EXISTS documents_fts_ai AFTER INSERT ON documents BEGIN
@@ -311,13 +312,6 @@ export const purgeDoc = db.transaction((vault: string, id: string) => {
   qPurgeChanges.run(id);
   qPurgeDoc.run(id);
 });
-
-function deriveTitle(content: string, path: string): string {
-  const heading = content.match(/^#\s+(.+)$/m);
-  if (heading) return heading[1].trim();
-  const base = path.split("/").pop() ?? path;
-  return base.replace(/\.md$/i, "");
-}
 
 export class ConflictError extends Error {
   constructor(message: string, public server?: Doc) {

@@ -17,7 +17,7 @@ no tests yet — plan 003 fixes that, and plan 004 makes CI actually run them.
 | 003 | Client test runner + `reconcile.ts` characterization tests | P1 | M | — | DONE — Vitest + 18 tests (14 classify/9 decisions, 2 merge, 2 sha256), 18/18 pass. Config mergeada en el `vite.config.ts` existente (no `vitest.config.ts` separado) por la STOP condition del plan |
 | 004 | CI gate: run tests + typecheck on push/PR | P2 | S | 003 | DONE (local) — ci.yml (server+client tests, typecheck) válido; verificado local. Falta que corra en GitHub (requiere push de main) |
 | 005 | Connection tokens → OS keychain (not plaintext JSON) | P2 | M | — | TODO |
-| 006 | Single-source the search logic (server + MCP) | P2 | M | — | TODO |
+| 006 | Single-source the search logic (server + MCP) | P2 | M | — | DONE — `server/src/search-common.ts` (puro: `toMatchQuery`/`deriveTitle`/`FTS_TOKENIZER`) importado desde search.ts, db.ts y mcp/localIndex.ts; copias borradas; sin cambio de comportamiento (server bun test ✓) |
 | 007 | Small hardening bundle (token compare, env docs, esbuild, Rust lock) | P3 | S | — | TODO |
 | 008 | Auto-updater **design/spike** | P3 | M | code-signing (external) | TODO |
 | 009 | Wikilink heading autocomplete + fix stale README | P3 | S/M | 003 (soft) | TODO |
