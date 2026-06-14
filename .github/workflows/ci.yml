@@ -1,0 +1,42 @@
+name: CI
+
+# Corre tests y typecheck en cada push a main y en cada PR. No compila la app
+# (eso lo hace release.yml en los tags). Es el gate de calidad del repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Server tests
+        run: bun test
+        working-directory: ./server
+
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install deps
+        run: bun install
+        working-directory: ./client
+      - name: Typecheck
+        run: bunx tsc --noEmit
+        working-directory: ./client
+      - name: Client tests
+        # Corre solo si existe el script `test` (lo agrega el plan 003).
+        run: |
+          if bun run --silent test --version >/dev/null 2>&1 || grep -q '"test"' package.json; then
+            bun run test
+          else
+            echo "no client test script yet — skipping"
+          fi
+        working-directory: ./client
