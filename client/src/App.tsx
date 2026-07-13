@@ -66,6 +66,7 @@ import { ConfirmHost } from "~/components/ConfirmHost";
 import { CommandPalette, type Command } from "~/components/CommandPalette";
 import { HistoryDialog } from "~/components/HistoryDialog";
 import { AddVaultDialog } from "~/components/AddVaultDialog";
+import { ConnectionsDialog } from "~/components/ConnectionsDialog";
 import { WebIcon } from "~/components/WebIcon";
 import { relativeTime } from "~/lib/time";
 import {
@@ -109,6 +110,8 @@ function hostOf(serverUrl: string): string {
  * del campo `vaultName` que devuelve el server.
  */
 function vaultLabel(localPath: string): string {
+  const custom = state.connections.find((c) => c.vault === localPath)?.name;
+  if (custom) return custom;
   const sess = state.sessions[localPath];
   if (sess?.remoteVaultName) return `${sess.remoteVaultName} @ ${hostOf(sess.serverUrl)}`;
   return vaultName(localPath);
@@ -182,7 +185,7 @@ const BootSplash: Component = () => (
   </div>
 );
 
-const ConnectionManager: Component<{ onAddVault: () => void }> = (props) => {
+const ConnectionManager: Component<{ onAddVault: () => void; onManage: () => void }> = (props) => {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [err, setErr] = createSignal<string | null>(null);
   const [autostart, setAutostartState] = createSignal(false);
@@ -235,7 +238,7 @@ const ConnectionManager: Component<{ onAddVault: () => void }> = (props) => {
                   <button class="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => openSaved(conn)} disabled={!!busy()}>
                     <FolderOpen class="h-4 w-4 shrink-0 text-muted-foreground" />
                     <span class="min-w-0">
-                      <span class="block truncate text-sm font-medium">{vaultName(conn.vault)}</span>
+                      <span class="block truncate text-sm font-medium">{conn.name ?? vaultName(conn.vault)}</span>
                       <span class="block truncate text-xs text-muted-foreground">{conn.serverUrl ?? "local"}</span>
                     </span>
                     <Show when={busy() === conn.vault}>
@@ -263,6 +266,12 @@ const ConnectionManager: Component<{ onAddVault: () => void }> = (props) => {
             <Plus class="h-4 w-4" />
             Agregar vault
           </Button>
+          <Show when={state.connections.length}>
+            <Button variant="ghost" class="mt-2 w-full" onClick={props.onManage} disabled={!!busy()}>
+              <Settings class="h-4 w-4" />
+              Gestionar conexiones
+            </Button>
+          </Show>
         </div>
 
         <Show when={err()}>
@@ -440,6 +449,7 @@ const App: Component = () => {
   const [showNew, setShowNew] = createSignal(false);
   const [showTokens, setShowTokens] = createSignal(false);
   const [showVaults, setShowVaults] = createSignal(false);
+  const [showConnections, setShowConnections] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
   const [showTrash, setShowTrash] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
@@ -763,7 +773,7 @@ const App: Component = () => {
       {/* AddVaultDialog vive afuera del Show de "ready" para estar disponible
           tanto en el estado vacío como en el switcher. */}
       <AddVaultDialog open={showAddVault()} onOpenChange={setShowAddVault} />
-      <Show when={s()?.ready} fallback={<ConnectionManager onAddVault={() => setShowAddVault(true)} />}>
+      <Show when={s()?.ready} fallback={<ConnectionManager onAddVault={() => setShowAddVault(true)} onManage={() => setShowConnections(true)} />}>
       <div class="flex h-full flex-col">
         {/* Topbar */}
         <header class="flex h-12 shrink-0 items-center gap-3 border-b px-3">
@@ -951,6 +961,10 @@ const App: Component = () => {
                   <Plus class="h-3.5 w-3.5 shrink-0" />
                   Agregar vault…
                 </DropdownMenuItem>
+                <DropdownMenuItem class="gap-2 text-muted-foreground" onSelect={() => setShowConnections(true)}>
+                  <Settings class="h-3.5 w-3.5 shrink-0" />
+                  Gestionar conexiones…
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </aside>
@@ -1124,6 +1138,7 @@ const App: Component = () => {
       <NewDocDialog open={showNew()} initial={newPrefill()} onOpenChange={setShowNew} onCreate={onCreate} />
       <TokenManager open={showTokens()} onOpenChange={setShowTokens} />
       <VaultManager open={showVaults()} onOpenChange={setShowVaults} />
+      <ConnectionsDialog open={showConnections()} onOpenChange={setShowConnections} />
       <SettingsDialog open={showSettings()} onOpenChange={setShowSettings} />
       <TrashDialog open={showTrash()} onOpenChange={setShowTrash} />
       <CommandPalette open={showPalette()} onOpenChange={setShowPalette} commands={commands} />
