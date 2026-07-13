@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { renderToHtml, setWikiResolver } from "~/lib/markdown";
-import { createResolver } from "~/lib/links";
+import { createResolver, toggleTaskAtIndex } from "~/lib/links";
 import type { Doc } from "~/lib/api";
 
 const doc = (id: string, path: string, content: string): Doc => ({ id, path, content }) as Doc;
@@ -49,6 +49,28 @@ describe("tareas interactivas", () => {
     expect(html).toContain('data-task="2"');
     expect(html).not.toContain('data-task="3"');
     expect(html).not.toContain("disabled");
+  });
+});
+
+describe("alineación data-task <-> toggleTaskAtIndex", () => {
+  const md = "- [ ] uno\n\n> [!note] c\n> - [ ] dos\n\n- [ ] tres\n";
+
+  it("renderToHtml asigna data-task a top-level y a la tarea del callout", () => {
+    const html = renderToHtml(md);
+    expect(html).toContain('data-task="0"');
+    expect(html).toContain('data-task="1"');
+    expect(html).toContain('data-task="2"');
+  });
+
+  it("toggleTaskAtIndex(1) flipea la tarea del callout sin tocar las otras", () => {
+    const out = toggleTaskAtIndex(md, 1);
+    expect(out).toContain("> - [x] dos");
+    expect(out).toContain("- [ ] uno");
+    expect(out).toContain("- [ ] tres");
+  });
+
+  it("toggleTaskAtIndex(2) flipea la tarea top-level posterior al callout", () => {
+    expect(toggleTaskAtIndex(md, 2)).toContain("- [x] tres");
   });
 });
 

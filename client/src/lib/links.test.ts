@@ -69,4 +69,17 @@ describe("toggleTaskAtIndex", () => {
   it("fuera de rango no cambia nada", () => {
     expect(toggleTaskAtIndex(md, 9)).toBe(md);
   });
+
+  it("cuenta y flipea tareas con prefijo > (blockquote)", () => {
+    const md = "- [ ] a\n> - [ ] b\n- [ ] c\n";
+    const out = toggleTaskAtIndex(md, 1);
+    expect(out).toContain("> - [x] b");
+    expect(out).toContain("- [ ] a");
+    expect(out).toContain("- [ ] c");
+  });
+
+  it("cuenta y flipea una tarea dentro de un callout", () => {
+    const md2 = "> [!note] t\n> - [ ] x\n";
+    expect(toggleTaskAtIndex(md2, 0)).toContain("> - [x] x");
+  });
 });
