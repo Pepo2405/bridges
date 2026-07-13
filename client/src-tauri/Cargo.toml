@@ -1,6 +1,6 @@
 [package]
 name = "bridges-client"
-version = "0.1.0"
+version = "0.2.0"
 description = "Bridges — vault de documentación compartido"
 authors = ["Bridges"]
 edition = "2021"
