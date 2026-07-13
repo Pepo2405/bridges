@@ -24,6 +24,7 @@ export const EditConnectionDialog: Component<{
   const [name, setName] = createSignal("");
   const [serverUrl, setServerUrl] = createSignal("");
   const [token, setToken] = createSignal("");
+  const [tokenLoaded, setTokenLoaded] = createSignal(false);
   const [reveal, setReveal] = createSignal(false);
   const [copied, setCopied] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
@@ -44,10 +45,14 @@ export const EditConnectionDialog: Component<{
       setCopied(false);
       setErr(null);
       setToken("");
+      setTokenLoaded(false);
     });
     secretGet(v)
       .then((t) => {
-        if (props.vault === v) setToken(t ?? "");
+        if (props.vault === v) {
+          setToken(t ?? "");
+          setTokenLoaded(true);
+        }
       })
       .catch(() => {});
   });
@@ -69,10 +74,12 @@ export const EditConnectionDialog: Component<{
     setBusy(true);
     setErr(null);
     try {
-      await updateConnection(v, {
-        name: name(),
-        ...(isLocal() ? {} : { serverUrl: serverUrl().trim(), token: token() }),
-      });
+      const patch: { name: string; serverUrl?: string; token?: string } = { name: name() };
+      if (!isLocal()) {
+        patch.serverUrl = serverUrl().trim();
+        if (tokenLoaded()) patch.token = token();
+      }
+      await updateConnection(v, patch);
       props.onOpenChange(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
