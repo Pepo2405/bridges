@@ -120,3 +120,66 @@
 .note-prop { display: flex; gap: 0.75rem; padding: 0.2rem 0; align-items: baseline; }
 .note-prop-key { color: hsl(var(--muted-foreground)); min-width: 5.5rem; text-transform: capitalize; }
 .note-prop-val { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+
+/* Callouts estilo Obsidian (> [!tipo]). */
+.prose-bridges .callout {
+  border: 1px solid hsl(var(--border));
+  border-left: 3px solid var(--callout-color, hsl(var(--muted-foreground)));
+  border-radius: var(--radius);
+  background: var(--callout-bg, hsl(var(--muted) / 0.4));
+  padding: 0.6em 0.9em;
+  margin: 0.7em 0;
+}
+.prose-bridges .callout-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-weight: 600;
+  color: var(--callout-color, hsl(var(--foreground)));
+}
+.prose-bridges .callout-icon { width: 1.1em; height: 1.1em; flex: none; }
+.prose-bridges .callout-caret {
+  width: 1em;
+  height: 1em;
+  margin-left: auto;
+  transition: transform 0.15s;
+  transform: rotate(90deg);
+}
+.prose-bridges .callout[data-fold] .callout-title { cursor: pointer; }
+.prose-bridges .callout.is-collapsed .callout-caret { transform: rotate(0deg); }
+.prose-bridges .callout.is-collapsed .callout-body { display: none; }
+.prose-bridges .callout-body { margin-top: 0.4em; }
+.prose-bridges .callout-body > :first-child { margin-top: 0; }
+.prose-bridges .callout-body > :last-child { margin-bottom: 0; }
+.prose-bridges .callout-note,
+.prose-bridges .callout-quote { --callout-color: hsl(var(--muted-foreground)); --callout-bg: hsl(var(--muted-foreground) / 0.08); }
+.prose-bridges .callout-info,
+.prose-bridges .callout-tip { --callout-color: hsl(199 89% 55%); --callout-bg: hsl(199 89% 55% / 0.08); }
+.prose-bridges .callout-success,
+.prose-bridges .callout-question { --callout-color: hsl(142 71% 45%); --callout-bg: hsl(142 71% 45% / 0.08); }
+.prose-bridges .callout-warning { --callout-color: hsl(38 92% 50%); --callout-bg: hsl(38 92% 50% / 0.1); }
+.prose-bridges .callout-danger { --callout-color: hsl(var(--primary)); --callout-bg: hsl(var(--primary) / 0.1); }
+
+/* Embeds (![[Nota]] / ![[Nota#Heading]]). */
+.prose-bridges .embed {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  padding: 0.2em 0.9em;
+  margin: 0.7em 0;
+  background: hsl(var(--muted) / 0.25);
+}
+.prose-bridges .embed-title { font-size: 0.8em; color: hsl(var(--muted-foreground)); margin: 0.4em 0; }
+.prose-bridges .embed-title a { color: hsl(var(--muted-foreground)); cursor: pointer; }
+.prose-bridges .embed-title a:hover { color: hsl(var(--foreground)); text-decoration: none; }
+.prose-bridges .embed-missing { color: hsl(var(--muted-foreground)); font-style: italic; }
+.prose-bridges .embed-body > :first-child { margin-top: 0; }
+
+/* Checkbox de tareas interactivo. */
+.prose-bridges input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: hsl(var(--primary));
+  margin-right: 0.4em;
+  vertical-align: middle;
+}
+.prose-bridges input[type="checkbox"][disabled] { cursor: default; }
+.prose-bridges li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1em; }
