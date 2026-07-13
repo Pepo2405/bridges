@@ -50,7 +50,7 @@ import {
 } from "~/lib/store";
 import { decideEditorSync } from "~/lib/editorSync";
 import { buildTree, renderMarkdown, setWikiResolver, parseFrontmatter } from "~/lib/markdown";
-import { buildBacklinks, createResolver, displayName, parseHeadings } from "~/lib/links";
+import { buildBacklinks, createResolver, displayName, parseHeadings, toggleTaskAtIndex } from "~/lib/links";
 import type { Doc, SearchHit } from "~/lib/api";
 import { FileTree, type TreeAction } from "~/components/FileTree";
 import type { TreeNode } from "~/lib/markdown";
@@ -697,9 +697,29 @@ const App: Component = () => {
     docs().map((d) => ({ label: displayName(d.path), path: d.path, headings: parseHeadings(d.content) })),
   );
 
-  // Click en el preview: un #tag busca por ese tag; un [[wikilink]] navega a la nota.
+  // Click en el preview: tarea -> togglea/guarda; callout colapsable -> fold;
+  // #tag -> busca; [[wikilink]] / embed -> navega.
   const onPreviewClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
+    // Tarea interactiva: togglea el source de la nota actual y guarda.
+    const cb = target.closest("input[data-task]");
+    if (cb) {
+      e.preventDefault();
+      const n = Number(cb.getAttribute("data-task"));
+      setDraft(toggleTaskAtIndex(draft(), n));
+      setDirty(true);
+      void onSave();
+      return;
+    }
+    // Callout colapsable: togglea el fold (efímero, no se escribe al .md).
+    const calloutTitle = target.closest(".callout-title");
+    if (calloutTitle) {
+      const box = calloutTitle.closest(".callout[data-fold]");
+      if (box) {
+        box.classList.toggle("is-collapsed");
+        return;
+      }
+    }
     const tagEl = target.closest("[data-tag]");
     if (tagEl) {
       e.preventDefault();
