@@ -705,6 +705,8 @@ const App: Component = () => {
     const cb = target.closest("input[data-task]");
     if (cb) {
       e.preventDefault();
+      // Solo escribible: un viewer read-only no debe ensuciar el draft local.
+      if (!perms().write) return;
       const n = Number(cb.getAttribute("data-task"));
       setDraft(toggleTaskAtIndex(draft(), n));
       setDirty(true);

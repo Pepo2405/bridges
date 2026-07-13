@@ -173,6 +173,7 @@
 .prose-bridges .embed-title a:hover { color: hsl(var(--foreground)); text-decoration: none; }
 .prose-bridges .embed-missing { color: hsl(var(--muted-foreground)); font-style: italic; }
 .prose-bridges .embed-body > :first-child { margin-top: 0; }
+.prose-bridges .embed-body > :last-child { margin-bottom: 0; }
 
 /* Checkbox de tareas interactivo. */
 .prose-bridges input[type="checkbox"] {

@@ -79,6 +79,16 @@ describe("alineación data-task <-> toggleTaskAtIndex", () => {
     expect(html).toContain('data-task="0"');
     expect(html).not.toContain('data-task="1"');
   });
+
+  it("ordenada+bullet: ambas interactivas y el consumidor cuenta lo mismo", () => {
+    const mixed = "1. [ ] compra\n- [ ] llamar\n";
+    const html = renderToHtml(mixed);
+    expect(html).toContain('data-task="0"');
+    expect(html).toContain('data-task="1"');
+    expect(html).not.toContain("disabled");
+    expect(toggleTaskAtIndex(mixed, 0)).toContain("1. [x] compra");
+    expect(toggleTaskAtIndex(mixed, 1)).toContain("- [x] llamar");
+  });
 });
 
 describe("embeds", () => {

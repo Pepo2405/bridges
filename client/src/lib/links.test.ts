@@ -89,4 +89,22 @@ describe("toggleTaskAtIndex", () => {
     expect(out).toContain("- [x] real");
     expect(out).toContain("> - [ ] x");
   });
+
+  it("flipea [ ]->[x] en tarea de lista ordenada con punto", () => {
+    expect(toggleTaskAtIndex("1. [ ] a\n", 0)).toContain("1. [x] a");
+  });
+
+  it("flipea [x]->[ ] en tarea de lista ordenada con paréntesis", () => {
+    expect(toggleTaskAtIndex("1) [x] a\n", 0)).toContain("1) [ ] a");
+  });
+
+  it("mixto ordenada+bullet: cada índice togglea su propia línea", () => {
+    const md = "1. [ ] compra\n- [ ] llamar\n";
+    const out0 = toggleTaskAtIndex(md, 0);
+    expect(out0).toContain("1. [x] compra");
+    expect(out0).toContain("- [ ] llamar");
+    const out1 = toggleTaskAtIndex(md, 1);
+    expect(out1).toContain("- [x] llamar");
+    expect(out1).toContain("1. [ ] compra");
+  });
 });

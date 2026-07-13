@@ -125,13 +125,13 @@ export function extractSection(content: string, heading: string): string | null 
   return start === -1 ? null : lines.slice(start).join("\n");
 }
 
-/** Flipea [ ]<->[x] en la n-ésima tarea bullet del markdown (orden de documento,
+/** Flipea [ ]<->[x] en la n-ésima tarea (bullet u ordenada) del markdown (orden de
  *  salteando code fences). Devuelve md sin cambios si n está fuera de rango. */
 export function toggleTaskAtIndex(md: string, n: number): string {
   const lines = md.split("\n");
   let inFence = false;
   let count = 0;
-  const re = /^(\s*(?:>\s*)*[-*+]\s+\[)([ xX])(\].*)$/;
+  const re = /^(\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\].*)$/;
   for (let i = 0; i < lines.length; i++) {
     if (/^\s*(?:>\s*)*```/.test(lines[i])) {
       inFence = !inFence;
