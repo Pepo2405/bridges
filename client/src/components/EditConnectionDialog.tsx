@@ -1,4 +1,4 @@
-import { type Component, Show, createSignal, createEffect } from "solid-js";
+import { type Component, Show, createSignal, createEffect, untrack } from "solid-js";
 import { Eye, EyeOff, Copy, Check } from "lucide-solid";
 import { state, updateConnection } from "~/lib/store";
 import { secretGet } from "~/lib/tauri";
@@ -36,15 +36,19 @@ export const EditConnectionDialog: Component<{
   createEffect(() => {
     const v = props.vault;
     if (!props.open || !v) return;
-    const c = state.connections.find((x) => x.vault === v) ?? null;
-    setName(c?.name ?? "");
-    setServerUrl(c?.serverUrl ?? "");
-    setReveal(false);
-    setCopied(false);
-    setErr(null);
-    setToken("");
+    untrack(() => {
+      const c = state.connections.find((x) => x.vault === v) ?? null;
+      setName(c?.name ?? "");
+      setServerUrl(c?.serverUrl ?? "");
+      setReveal(false);
+      setCopied(false);
+      setErr(null);
+      setToken("");
+    });
     secretGet(v)
-      .then((t) => setToken(t ?? ""))
+      .then((t) => {
+        if (props.vault === v) setToken(t ?? "");
+      })
       .catch(() => {});
   });
 
