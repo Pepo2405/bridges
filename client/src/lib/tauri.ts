@@ -126,7 +126,7 @@ export async function onServerStatus(cb: (connId: string, connected: boolean) =>
 
 // --- config global de la app: conexiones guardadas (carpeta + servidor) ---
 
-export type Connection = { vault: string; serverUrl: string | null; token?: string; openedAt: string };
+export type Connection = { vault: string; serverUrl: string | null; token?: string; openedAt: string; name?: string };
 export type AppConfig = { connections: Connection[]; lastVault: string | null };
 
 const EMPTY_CONFIG: AppConfig = { connections: [], lastVault: null };
