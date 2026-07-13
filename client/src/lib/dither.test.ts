@@ -6,8 +6,7 @@ describe("BAYER8", () => {
     expect(BAYER8.length).toBe(64);
     expect(new Set(BAYER8).size).toBe(64);
     const sorted = [...BAYER8].sort((a, b) => a - b);
-    expect(sorted[0]).toBe(0);
-    expect(sorted[63]).toBe(63);
+    expect(sorted).toEqual([...Array(64).keys()]);
   });
 });
 
@@ -36,6 +35,9 @@ describe("applyPostProcess", () => {
       expect(palette).toContain(data[o + 2]); // B
       expect(data[o + 3]).toBe(255);          // alpha intacto
     }
+    // el offset Bayer produce variación espacial, no redondeo uniforme
+    const rowValues = Array.from({ length: w }, (_, x) => data[x * 4]);
+    expect(new Set(rowValues).size).toBeGreaterThan(1);
   });
 
   it("las filas impares (scanline) quedan más oscuras que las pares en promedio", () => {
