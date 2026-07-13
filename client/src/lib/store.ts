@@ -958,6 +958,55 @@ export async function removeConnection(vault: string) {
   setState("connections", connections);
 }
 
+/**
+ * Actualiza una conexión guardada: nombre, serverUrl y/o token. Persiste al
+ * config + keychain (keychain antes del JSON). Si la sesión está abierta y
+ * cambiaron las credenciales (URL o token), reconecta preservando el foco; un
+ * error de reconexión se propaga (la conexión queda cerrada pero guardada).
+ * Cambio de solo-nombre no reconecta. Campos ausentes en `patch` se mantienen.
+ */
+export async function updateConnection(
+  vault: string,
+  patch: { name?: string; serverUrl?: string | null; token?: string },
+): Promise<void> {
+  const cfg = await configLoad();
+  const cur = cfg.connections.find((c) => c.vault === vault);
+  if (!cur) return;
+
+  const nextServerUrl =
+    patch.serverUrl === undefined
+      ? cur.serverUrl
+      : patch.serverUrl === null
+        ? null
+        : patch.serverUrl.replace(/\/$/, "");
+  const nextName = patch.name === undefined ? cur.name : patch.name.trim() || undefined;
+  const curToken =
+    cur.serverUrl === null ? undefined : ((isTauri ? await secretGet(vault) : cur.token) ?? undefined);
+  const nextToken = patch.token === undefined ? curToken : patch.token || undefined;
+
+  // Persistir credenciales (keychain antes del JSON). Vaults locales no llevan token.
+  if (nextServerUrl !== null) {
+    if (nextToken) await secretSet(vault, nextToken);
+    else await secretDelete(vault);
+  }
+  // Token en el JSON solo en browser (en Tauri vive en el keychain).
+  const conn: Connection = isTauri
+    ? { vault, serverUrl: nextServerUrl, openedAt: cur.openedAt, name: nextName }
+    : { vault, serverUrl: nextServerUrl, token: nextToken, openedAt: cur.openedAt, name: nextName };
+  const connections = cfg.connections.map((c) => (c.vault === vault ? conn : c));
+  await configSave({ connections, lastVault: cfg.lastVault });
+  setState("connections", connections);
+
+  // Reconectar solo si cambian credenciales y hay sesión abierta.
+  const credsChanged = nextServerUrl !== cur.serverUrl || nextToken !== curToken;
+  if (credsChanged && runtimes.has(vault)) {
+    const wasActive = state.activeVault === vault;
+    await closeSession(vault);
+    await openSession({ vault, serverUrl: nextServerUrl });
+    if (wasActive) setState("activeVault", vault);
+  }
+}
+
 /** Reacciona a un cambio externo de archivo (watcher): debounce + encolar + flush. */
 function scheduleExternal(rt: SessionRuntime, path: string) {
   clearTimeout(rt.debounce.get(path));
