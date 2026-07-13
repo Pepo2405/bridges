@@ -133,7 +133,7 @@ export function toggleTaskAtIndex(md: string, n: number): string {
   let count = 0;
   const re = /^(\s*(?:>\s*)*[-*+]\s+\[)([ xX])(\].*)$/;
   for (let i = 0; i < lines.length; i++) {
-    if (/^```/.test(lines[i])) {
+    if (/^\s*(?:>\s*)*```/.test(lines[i])) {
       inFence = !inFence;
       continue;
     }

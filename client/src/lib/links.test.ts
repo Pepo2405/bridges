@@ -82,4 +82,11 @@ describe("toggleTaskAtIndex", () => {
     const md2 = "> [!note] t\n> - [ ] x\n";
     expect(toggleTaskAtIndex(md2, 0)).toContain("> - [x] x");
   });
+
+  it("no cuenta tareas dentro de un fence anidado en blockquote", () => {
+    const mdFence = "> ```\n> - [ ] x\n> ```\n\n- [ ] real\n";
+    const out = toggleTaskAtIndex(mdFence, 0);
+    expect(out).toContain("- [x] real");
+    expect(out).toContain("> - [ ] x");
+  });
 });

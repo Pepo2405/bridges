@@ -72,6 +72,13 @@ describe("alineación data-task <-> toggleTaskAtIndex", () => {
   it("toggleTaskAtIndex(2) flipea la tarea top-level posterior al callout", () => {
     expect(toggleTaskAtIndex(md, 2)).toContain("- [x] tres");
   });
+
+  it("un fence en blockquote no produce data-task; sólo la tarea real cuenta", () => {
+    const mdFence = "> ```\n> - [ ] x\n> ```\n\n- [ ] real\n";
+    const html = renderToHtml(mdFence);
+    expect(html).toContain('data-task="0"');
+    expect(html).not.toContain('data-task="1"');
+  });
 });
 
 describe("embeds", () => {
