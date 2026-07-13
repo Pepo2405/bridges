@@ -114,9 +114,13 @@ salteando code fences** → el contador da `data-task=0,1,2…` alineado con el 
 toggle nativo del checkbox no pelee con el re-render (el memo `preview()` recomputa desde el draft
 nuevo y refleja el estado). El guardado usa el path optimista existente; 409 → `ConflictDialog`.
 
-## Feature 3 — Embeds (extensión inline)
+## Feature 3 — Embeds (extensión block-level)
 
-Extensión **inline** en cada instancia (`start` en `![[`, tokenizer `^!\[\[([^\]]+)\]\]`).
+Extensión **block-level** en cada instancia (`start` en `^!\[\[`, tokenizer `^!\[\[([^\]]+)\]\] *(?:\n|$)`):
+un embed es una línea cuyo único contenido es `![[...]]`. Se eligió block (y no inline) para no emitir
+`<div>` dentro de `<p>` (HTML inválido). Un `![[ ]]` en medio de un párrafo **no** se expande: degrada a
+`!` + wikilink navegable (documentado en Fuera de alcance). Coincide con el uso real de Obsidian (embeds
+en su propia línea).
 
 - Resuelve el target con el `resolver` global (mismo que `wikilink`). `normalizeTarget` saca alias y
   `#`; se conserva el heading por separado para `extractSection`.
@@ -229,6 +233,8 @@ muestra solo esa sección y el título navega.
 - **Tareas de lista ordenada** (`1. [ ]`): solo bullets (`- [ ]`), como GFM.
 - **Persistir el estado de fold** de callouts al archivo: efímero, igual que Obsidian.
 - **Recursión de embeds > 1 nivel**: capada a 1 a propósito.
+- **Embeds inline** (`![[ ]]` en medio de un párrafo): solo se expanden en su propia línea (extensión
+  block-level, para no romper el HTML con `<div>` en `<p>`); inline degrada a `!` + wikilink.
 
 ## Criterios de éxito
 
