@@ -31,8 +31,8 @@ const lerpHue = (a: number, b: number, t: number) => {
   return (a + d * t + 360) % 360;
 };
 
-function token(name: string, alpha?: number): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+function token(el: Element, name: string, alpha?: number): string {
+  const v = getComputedStyle(el).getPropertyValue(name).trim();
   return alpha == null ? `hsl(${v})` : `hsl(${v} / ${alpha})`;
 }
 
@@ -80,22 +80,23 @@ export const GraphView: Component<{
   function refreshColors() {
     // Los colores solo cambian al alternar tema; con la rotación dibujando en bucle
     // evitamos releer ~12 tokens por frame usando --foreground como huella del tema.
-    const fg = getComputedStyle(document.documentElement).getPropertyValue("--foreground").trim();
+    // Se lee desde `wrap` (class="dark") → los tokens resuelven siempre a la paleta oscura.
+    const fg = getComputedStyle(wrap).getPropertyValue("--foreground").trim();
     if (fg === colorKey) return;
     colorKey = fg;
     C = {
-      isDark: document.documentElement.classList.contains("dark"),
-      fg: token("--foreground", 0.9),
-      fgDim: token("--foreground", 0.22),
-      fgLabel: token("--foreground", 0.88),
-      edge: token("--foreground", 0.075),
-      edgeDim: token("--foreground", 0.03),
-      edgeLit: token("--primary", 0.7),
-      primary: token("--primary"),
-      phantom: token("--muted-foreground", 0.5),
-      phantomDim: token("--muted-foreground", 0.15),
-      bg: token("--background", 0.85),
-      orbit: token("--foreground", 0.06),
+      isDark: true, // el efecto CRT es inherentemente fósforo/oscuro (wrap lleva class="dark")
+      fg: token(wrap, "--foreground", 0.9),
+      fgDim: token(wrap, "--foreground", 0.22),
+      fgLabel: token(wrap, "--foreground", 0.88),
+      edge: token(wrap, "--foreground", 0.075),
+      edgeDim: token(wrap, "--foreground", 0.03),
+      edgeLit: token(wrap, "--primary", 0.7),
+      primary: token(wrap, "--primary"),
+      phantom: token(wrap, "--muted-foreground", 0.5),
+      phantomDim: token(wrap, "--muted-foreground", 0.15),
+      bg: token(wrap, "--background", 0.85),
+      orbit: token(wrap, "--foreground", 0.06),
     };
   }
 
@@ -648,7 +649,7 @@ export const GraphView: Component<{
   });
 
   return (
-    <div ref={wrap} class="relative h-full w-full overflow-hidden" style={{ "touch-action": "none" }}>
+    <div ref={wrap} class="dark relative h-full w-full overflow-hidden" style={{ "touch-action": "none" }}>
       <canvas ref={canvas} class="block" style={{ cursor: "grab" }} />
       <GraphControls
         search={search} setSearch={setSearch}
