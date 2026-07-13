@@ -11,6 +11,7 @@ import {
 import type { Doc } from "~/lib/api";
 import { buildGraph, type GraphNode, type GraphLink } from "~/lib/graph";
 import { GraphControls, type LabelMode } from "~/components/GraphControls";
+import { PIXEL, applyPostProcess } from "~/lib/dither";
 
 const DEFAULTS = { repel: 650, linkDist: 90, gravity: 0.09 };
 const TAU = Math.PI * 2;
@@ -102,6 +103,12 @@ export const GraphView: Component<{
 
   let k = 1, tx = 0, ty = 0, w = 0, h = 0, dpr = 1;
   let fitted = false;
+
+  // Buffers del pipeline CRT: scene (coords CSS) → low (W/PIXEL, dither) → canvas visible.
+  let scene: HTMLCanvasElement | null = null;
+  let low: HTMLCanvasElement | null = null;
+  let sceneCtx: CanvasRenderingContext2D | null = null;
+  let lowCtx: CanvasRenderingContext2D | null = null;
 
   // --- sistema solar: importancia (masa) por backlinks + rotación del campo ---
   let maxWeight = 1; // peso máximo del grafo, para normalizar la importancia
@@ -195,14 +202,31 @@ export const GraphView: Component<{
     ty = h / 2 - ((minY + maxY) / 2) * k;
   }
 
-  function draw() {
-    const ctx = canvas.getContext("2d")!;
-    refreshColors();
+  // Contexto de resaltado del frame: rotación + qué nodos están "iluminados" (hover/vecinos/búsqueda).
+  function litContext() {
+    const c = Math.cos(angle), s2 = Math.sin(angle);
+    const q = search().trim().toLowerCase();
+    const searching = q.length > 0;
+    const hi = hovered;
+    const neighbors = hi ? adj.get(hi.id) ?? new Set<string>() : null;
+    const matches = searching
+      ? new Set(nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id))
+      : null;
+    const isLit = (id: string) => {
+      if (hi) return id === hi.id || (neighbors?.has(id) ?? false);
+      if (matches) return matches.has(id);
+      return true;
+    };
+    return { c, s2, hi, searching, isLit, dimming: !!hi || searching };
+  }
+
+  // Escena completa (fondo, nebulosa, estrellas, órbitas, edges, nodos) SIN labels.
+  // Coordenadas CSS: se dibuja sobre `scene` (W×H, sin dpr); el pixelado hace irrelevante el dpr aquí.
+  function drawScene(ctx: CanvasRenderingContext2D) {
     ctx.save();
-    ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
-    // Fondo de espacio profundo (solo en tema oscuro): nebulosa central tenue + estrellas.
+    // Fondo de espacio profundo: nebulosa central tenue + estrellas (C.isDark siempre true).
     if (C.isDark) {
       const neb = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.62);
       neb.addColorStop(0, "hsl(235 48% 11% / 0.55)");
@@ -223,23 +247,7 @@ export const GraphView: Component<{
     ctx.scale(k, k);
     ctx.lineCap = "round";
 
-    // Rotación del campo: giramos las coordenadas (no el ctx) para que las labels queden rectas.
-    // (s2 = sin; evitamos el nombre `s` porque el loop de edges usa `s` para el nodo origen.)
-    const c = Math.cos(angle), s2 = Math.sin(angle);
-
-    const q = search().trim().toLowerCase();
-    const searching = q.length > 0;
-    const hi = hovered;
-    const neighbors = hi ? adj.get(hi.id) ?? new Set<string>() : null;
-    const matches = searching ? new Set(nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id)) : null;
-
-    // Un nodo está "iluminado" si: no hay foco, o es el hover/vecino, o matchea la búsqueda.
-    const isLit = (id: string) => {
-      if (hi) return id === hi.id || (neighbors?.has(id) ?? false);
-      if (matches) return matches.has(id);
-      return true;
-    };
-    const dimming = !!hi || searching;
+    const { c, s2, hi, searching, isLit, dimming } = litContext();
 
     // Anillos de órbita: círculos concéntricos tenues centrados en el núcleo del sistema.
     ctx.strokeStyle = C.orbit;
@@ -325,10 +333,20 @@ export const GraphView: Component<{
       ctx.shadowBlur = 0;
     }
 
-    // labels
+    ctx.restore();
+  }
+
+  // Labels crisp: se dibujan DESPUÉS del post-proceso, sobre el canvas visible a resolución dpr.
+  function drawLabels(ctx: CanvasRenderingContext2D) {
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.translate(tx, ty);
+    ctx.scale(k, k);
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     ctx.lineJoin = "round";
+
+    const { c, s2, isLit, dimming } = litContext();
     const mode = labelMode();
     for (const n of nodes) {
       const lit = isLit(n.id);
@@ -340,7 +358,7 @@ export const GraphView: Component<{
       else showLabel = k > 0.55 || n.degree >= 3; // auto
       if (!showLabel) continue;
       const fs = 11 / k;
-      ctx.font = `${fs}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.font = `${fs}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
       const x = dispX(n, c, s2);
       const y = dispY(n, c, s2) + r + 3 / k;
       ctx.lineWidth = 3 / k;
@@ -351,6 +369,35 @@ export const GraphView: Component<{
     }
 
     ctx.restore();
+  }
+
+  // Orquestador del pipeline de tres buffers.
+  function draw() {
+    refreshColors();
+    if (!scene || !low || !sceneCtx || !lowCtx) return;
+
+    // 1) escena completa sin labels, en coords CSS
+    drawScene(sceneCtx);
+
+    // 2) downsample antialiaseado a low-res
+    lowCtx.imageSmoothingEnabled = true;
+    lowCtx.clearRect(0, 0, low.width, low.height);
+    lowCtx.drawImage(scene, 0, 0, low.width, low.height);
+
+    // 3) pasada de dither por CPU, in-place sobre el buffer low
+    const img = lowCtx.getImageData(0, 0, low.width, low.height);
+    applyPostProcess(img.data, low.width, low.height);
+    lowCtx.putImageData(img, 0, 0);
+
+    // 4) blit nearest-neighbor cubriendo todo el canvas visible → píxeles duros
+    const ctx = canvas.getContext("2d")!;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(low, 0, 0, canvas.width, canvas.height);
+
+    // 5) labels monospace crisp encima
+    drawLabels(ctx);
   }
 
   function loop(t?: number) {
@@ -485,6 +532,18 @@ export const GraphView: Component<{
     canvas.height = h * dpr;
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
+    if (!scene) {
+      scene = document.createElement("canvas");
+      sceneCtx = scene.getContext("2d");
+    }
+    if (!low) {
+      low = document.createElement("canvas");
+      lowCtx = low.getContext("2d", { willReadFrequently: true });
+    }
+    scene.width = w;
+    scene.height = h;
+    low.width = Math.max(1, Math.ceil(w / PIXEL));
+    low.height = Math.max(1, Math.ceil(h / PIXEL));
     genStars();
     if (tx === 0 && ty === 0) {
       tx = w / 2;
