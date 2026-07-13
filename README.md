@@ -66,6 +66,7 @@ La fuente de verdad son **archivos `.md` en disco**. El servidor mantiene la cop
 - **App empaquetada (.dmg)** para macOS Apple Silicon. Ver [Empaquetar](#empaquetar-dmg).
 - **Auth multi-token con permisos (RBAC)** + deploy con Docker. Ver [Auth](#auth) y [Deploy](#deploy).
 - Edición externa del doc abierto: si llega una edición externa/SSE del *mismo* doc mientras tenés cambios sin guardar, ya no se pisa el borrador. El `createEffect` de carga (`App.tsx`) distingue cambio de selección (carga fresca) de actualización externa: sin borrador refleja la edición; con borrador abre el `ConflictDialog` para resolver.
+- **Embeds `![[Nota]]` / `![[Nota#Heading]]`, callouts `> [!tipo]` colapsables y tareas `- [ ]` interactivas** en el preview (`lib/markdown.ts`: dos instancias de `marked`; toggle de tarea guarda al `.md`).
 
 Stack: **Bun + bun:sqlite** (server), **Tauri 2 + SolidJS + shadcn-solid + Tailwind** (cliente).
 > Nota: el spec original proponía Vue; se eligió **SolidJS** por performance.
