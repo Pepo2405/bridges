@@ -18,8 +18,10 @@ export type GraphSettings = {
   setRepel: Setter<number>;
   linkDist: Accessor<number>;
   setLinkDist: Setter<number>;
-  centerForce: Accessor<number>;
-  setCenterForce: Setter<number>;
+  gravity: Accessor<number>;
+  setGravity: Setter<number>;
+  spin: Accessor<boolean>;
+  setSpin: Setter<boolean>;
   onReset: () => void;
 };
 
@@ -132,6 +134,7 @@ export const GraphControls: Component<GraphSettings> = (props) => {
         <div class="mt-1">
           <Toggle label="Solo notas existentes" checked={!props.showPhantoms()} onChange={(v) => props.setShowPhantoms(!v)} />
           <Toggle label="Mostrar huérfanos" checked={props.showOrphans()} onChange={props.setShowOrphans} />
+          <Toggle label="Rotación orbital" checked={props.spin()} onChange={props.setSpin} />
         </div>
 
         <Section title="Mostrar">
@@ -154,13 +157,13 @@ export const GraphControls: Component<GraphSettings> = (props) => {
           <Slider label="Repulsión" value={props.repel()} min={100} max={1600} step={50} onInput={props.setRepel} />
           <Slider label="Distancia de enlace" value={props.linkDist()} min={30} max={260} step={5} onInput={props.setLinkDist} />
           <Slider
-            label="Fuerza al centro"
-            value={props.centerForce()}
+            label="Gravedad"
+            value={props.gravity()}
             min={0}
-            max={0.1}
-            step={0.004}
-            onInput={props.setCenterForce}
-            format={(v) => v.toFixed(3)}
+            max={0.4}
+            step={0.01}
+            onInput={props.setGravity}
+            format={(v) => v.toFixed(2)}
           />
         </Section>
       </div>

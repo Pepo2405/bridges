@@ -3,10 +3,8 @@ import {
   forceSimulation,
   forceManyBody,
   forceLink,
-  forceCenter,
   forceCollide,
-  forceX,
-  forceY,
+  forceRadial,
   type Simulation,
   type ForceLink,
 } from "d3-force";
@@ -14,7 +12,24 @@ import type { Doc } from "~/lib/api";
 import { buildGraph, type GraphNode, type GraphLink } from "~/lib/graph";
 import { GraphControls, type LabelMode } from "~/components/GraphControls";
 
-const DEFAULTS = { repel: 650, linkDist: 90, centerForce: 0.012 };
+const DEFAULTS = { repel: 650, linkDist: 90, gravity: 0.09 };
+const TAU = Math.PI * 2;
+const OMEGA = TAU / 300000; // rad/ms → ~1 vuelta cada 300s (sistema solar)
+const SUN_HUE = 45; // dorado del Sol: los archivos importantes viran a este tono al crecer
+const GLOW_HSL = `${SUN_HUE} 92% 62%`; // corona/halo dorado que irradian los soles
+const GLOW = `hsl(${GLOW_HSL})`;
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+};
+/** Interpola tonos por el arco más corto de la rueda (evita pasar por medio espectro). */
+const lerpHue = (a: number, b: number, t: number) => {
+  const d = ((b - a + 540) % 360) - 180;
+  return (a + d * t + 360) % 360;
+};
 
 function token(name: string, alpha?: number): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -33,18 +48,20 @@ export const GraphView: Component<{
   const [search, setSearch] = createSignal("");
   const [showPhantoms, setShowPhantoms] = createSignal(true);
   const [showOrphans, setShowOrphans] = createSignal(true);
-  const [labelMode, setLabelMode] = createSignal<LabelMode>("auto");
+  const [labelMode, setLabelMode] = createSignal<LabelMode>("hover");
   const [repel, setRepel] = createSignal(DEFAULTS.repel);
   const [linkDist, setLinkDist] = createSignal(DEFAULTS.linkDist);
-  const [centerForce, setCenterForce] = createSignal(DEFAULTS.centerForce);
+  const [gravity, setGravity] = createSignal(DEFAULTS.gravity);
+  const [spin, setSpin] = createSignal(true);
   const [nodeCount, setNodeCount] = createSignal(0);
   const resetSettings = () => {
     setRepel(DEFAULTS.repel);
     setLinkDist(DEFAULTS.linkDist);
-    setCenterForce(DEFAULTS.centerForce);
+    setGravity(DEFAULTS.gravity);
+    setSpin(true);
     setShowPhantoms(true);
     setShowOrphans(true);
-    setLabelMode("auto");
+    setLabelMode("hover");
     setSearch("");
   };
 
@@ -57,25 +74,73 @@ export const GraphView: Component<{
 
   let C = {
     fg: "", fgDim: "", fgLabel: "", edge: "", edgeDim: "", edgeLit: "",
-    primary: "", phantom: "", phantomDim: "", bg: "",
+    primary: "", phantom: "", phantomDim: "", bg: "", orbit: "", isDark: false,
   };
+  let colorKey = "";
   function refreshColors() {
+    // Los colores solo cambian al alternar tema; con la rotación dibujando en bucle
+    // evitamos releer ~12 tokens por frame usando --foreground como huella del tema.
+    const fg = getComputedStyle(document.documentElement).getPropertyValue("--foreground").trim();
+    if (fg === colorKey) return;
+    colorKey = fg;
     C = {
+      isDark: document.documentElement.classList.contains("dark"),
       fg: token("--foreground", 0.9),
       fgDim: token("--foreground", 0.22),
       fgLabel: token("--foreground", 0.88),
-      edge: token("--foreground", 0.1),
-      edgeDim: token("--foreground", 0.04),
+      edge: token("--foreground", 0.075),
+      edgeDim: token("--foreground", 0.03),
       edgeLit: token("--primary", 0.7),
       primary: token("--primary"),
       phantom: token("--muted-foreground", 0.5),
       phantomDim: token("--muted-foreground", 0.15),
       bg: token("--background", 0.85),
+      orbit: token("--foreground", 0.06),
     };
   }
 
   let k = 1, tx = 0, ty = 0, w = 0, h = 0, dpr = 1;
   let fitted = false;
+
+  // --- sistema solar: importancia (masa) por backlinks + rotación del campo ---
+  let maxWeight = 1; // peso máximo del grafo, para normalizar la importancia
+  let systemR = 300; // radio del sistema (borde donde orbitan los huérfanos)
+  let centerNode: GraphNode | null = null; // el "Sol": nota más referenciada, fija en el origen
+  let angle = 0; // rotación actual del campo (rad)
+  let lastT = 0; // timestamp del último frame, para avanzar la rotación
+
+  // Estrellas de fondo (espacio profundo). Fijas en pantalla, se regeneran al redimensionar.
+  let stars: { x: number; y: number; r: number; a: number }[] = [];
+  function genStars() {
+    const n = Math.round((w * h) / 6500);
+    stars = Array.from({ length: n }, () => ({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      r: Math.random() * 0.9 + 0.3,
+      a: Math.random() * 0.5 + 0.12,
+    }));
+  }
+
+  // Peso = backlinks entrantes + un poco de conectividad. Manda la gravedad, el tamaño y el brillo.
+  const weight = (n: GraphNode) => n.refs + n.degree * 0.5;
+  // Importancia normalizada [0,1]: 1 = sol del núcleo, 0 = huérfano del borde.
+  const imp = (n: GraphNode) => weight(n) / maxWeight;
+
+  // Color estilo sistema solar (componentes HSL, para poder construir el sombreado esférico):
+  //  · huérfanos (grado 0)  → cuerpos fríos blancos/grises (asteroides / enanas).
+  //  · archivos conectados  → planetas con color propio según su carpeta top-level.
+  //  · padres de muchos     → soles: al crecer en importancia el tono vira al dorado.
+  let groupHue = new Map<string, number>();
+  function nodeHSL(n: GraphNode, i: number): { h: number; s: number; l: number } {
+    if (n.degree === 0) return { h: 0, s: 0, l: C.isDark ? 74 : 55 }; // blanco/gris neutro
+    const folderHue = n.group != null ? groupHue.get(n.group) ?? 220 : 220;
+    const t = smoothstep(0.55, 0.9, i); // 0 = planeta (color de carpeta), 1 = sol (dorado)
+    return {
+      h: lerpHue(folderHue, SUN_HUE, t),
+      s: lerp(C.isDark ? 58 : 62, 92, t),
+      l: C.isDark ? lerp(60, 66, t) : lerp(48, 56, t),
+    };
+  }
 
   let hovered: GraphNode | null = null;
   let dragNode: GraphNode | null = null;
@@ -89,16 +154,26 @@ export const GraphView: Component<{
   const toWorld = (sx: number, sy: number) => ({ x: (sx - tx) / k, y: (sy - ty) / k });
 
   function nodeRadius(n: GraphNode): number {
-    return 3.5 + Math.sqrt(n.degree) * 2.3;
+    return 4 + Math.sqrt(weight(n)) * 2.9;
   }
+
+  // Coordenadas de pantalla-mundo tras aplicar la rotación del campo.
+  const dispX = (n: GraphNode, c: number, s: number) => (n.x ?? 0) * c - (n.y ?? 0) * s;
+  const dispY = (n: GraphNode, c: number, s: number) => (n.x ?? 0) * s + (n.y ?? 0) * c;
+  // Punto del mundo (ya rotado) → coordenadas de simulación (sin rotar), para arrastre.
+  const toSim = (wx: number, wy: number) => {
+    const c = Math.cos(angle), s = Math.sin(angle);
+    return { x: wx * c + wy * s, y: -wx * s + wy * c };
+  };
 
   function pickNode(sx: number, sy: number): GraphNode | null {
     const p = toWorld(sx, sy);
+    const c = Math.cos(angle), s = Math.sin(angle);
     for (let i = nodes.length - 1; i >= 0; i--) {
       const n = nodes[i];
       const r = nodeRadius(n) + 4;
-      const dx = (n.x ?? 0) - p.x;
-      const dy = (n.y ?? 0) - p.y;
+      const dx = dispX(n, c, s) - p.x;
+      const dy = dispY(n, c, s) - p.y;
       if (dx * dx + dy * dy <= r * r) return n;
     }
     return null;
@@ -125,9 +200,31 @@ export const GraphView: Component<{
     ctx.save();
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
+
+    // Fondo de espacio profundo (solo en tema oscuro): nebulosa central tenue + estrellas.
+    if (C.isDark) {
+      const neb = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.62);
+      neb.addColorStop(0, "hsl(235 48% 11% / 0.55)");
+      neb.addColorStop(1, "hsl(235 48% 11% / 0)");
+      ctx.fillStyle = neb;
+      ctx.fillRect(0, 0, w, h);
+      for (const st of stars) {
+        ctx.globalAlpha = st.a;
+        ctx.beginPath();
+        ctx.arc(st.x, st.y, st.r, 0, TAU);
+        ctx.fillStyle = "#fff";
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
     ctx.translate(tx, ty);
     ctx.scale(k, k);
     ctx.lineCap = "round";
+
+    // Rotación del campo: giramos las coordenadas (no el ctx) para que las labels queden rectas.
+    // (s2 = sin; evitamos el nombre `s` porque el loop de edges usa `s` para el nodo origen.)
+    const c = Math.cos(angle), s2 = Math.sin(angle);
 
     const q = search().trim().toLowerCase();
     const searching = q.length > 0;
@@ -143,17 +240,33 @@ export const GraphView: Component<{
     };
     const dimming = !!hi || searching;
 
-    // edges
+    // Anillos de órbita: círculos concéntricos tenues centrados en el núcleo del sistema.
+    ctx.strokeStyle = C.orbit;
+    ctx.lineWidth = 1 / k;
+    ctx.setLineDash([4 / k, 7 / k]);
+    for (const frac of [0.32, 0.55, 0.78, 1.02]) {
+      ctx.beginPath();
+      ctx.arc(0, 0, systemR * frac, 0, TAU);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // edges: finas y con una leve curva (mismo sentido) para desenredar el centro.
     for (const l of links) {
       const s = l.source as GraphNode;
       const t = l.target as GraphNode;
       const both = isLit(s.id) && isLit(t.id);
       const emphasize = hi ? s.id === hi.id || t.id === hi.id : searching && both;
       ctx.strokeStyle = emphasize ? C.edgeLit : dimming ? C.edgeDim : C.edge;
-      ctx.lineWidth = (emphasize ? 1.1 : 0.6) / k;
+      ctx.lineWidth = (emphasize ? 1.0 : 0.4) / k;
+      const ax = dispX(s, c, s2), ay = dispY(s, c, s2);
+      const bx = dispX(t, c, s2), by = dispY(t, c, s2);
+      // punto de control perpendicular al segmento → arco suave
+      const cpx = (ax + bx) / 2 - (by - ay) * 0.1;
+      const cpy = (ay + by) / 2 + (bx - ax) * 0.1;
       ctx.beginPath();
-      ctx.moveTo(s.x!, s.y!);
-      ctx.lineTo(t.x!, t.y!);
+      ctx.moveTo(ax, ay);
+      ctx.quadraticCurveTo(cpx, cpy, bx, by);
       ctx.stroke();
     }
 
@@ -163,17 +276,50 @@ export const GraphView: Component<{
       const lit = isLit(n.id);
       const phantom = n.docId == null;
       const selected = n.docId && n.docId === props.selectedId;
+      const i = imp(n);
+      const nx = dispX(n, c, s2), ny = dispY(n, c, s2);
       const focus = (hi && hi.id === n.id) || selected || (searching && lit);
+
+      // Corona dorada: los soles irradian calor estelar, creciente con la importancia.
+      if (!phantom && lit && i >= 0.5) {
+        const cr = r * (2.6 + i * 2.2);
+        const grad = ctx.createRadialGradient(nx, ny, r * 0.5, nx, ny, cr);
+        grad.addColorStop(0, `hsl(${GLOW_HSL} / ${0.22 * i})`);
+        grad.addColorStop(1, `hsl(${GLOW_HSL} / 0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(nx, ny, cr, 0, TAU);
+        ctx.fill();
+      }
 
       if (focus) {
         ctx.shadowColor = C.primary;
         ctx.shadowBlur = 16;
+      } else if (!phantom && lit && i >= 0.3) {
+        ctx.shadowColor = GLOW; // brillo dorado creciente en los hubs
+        ctx.shadowBlur = 4 + i * 12;
       }
       ctx.beginPath();
-      ctx.arc(n.x!, n.y!, r, 0, Math.PI * 2);
+      ctx.arc(nx, ny, r, 0, TAU);
       if (selected || (hi && hi.id === n.id)) ctx.fillStyle = C.primary;
       else if (phantom) ctx.fillStyle = lit ? C.phantom : C.phantomDim;
-      else ctx.fillStyle = lit ? C.fg : C.fgDim;
+      else {
+        const { h, s, l } = nodeHSL(n, i);
+        const a = lit ? 1 : 0.25;
+        if (r >= 5) {
+          // Esfera: highlight arriba-izquierda → terminador abajo-derecha, con la luz
+          // "viniendo del núcleo". Los soles tienen centro casi blanco (caliente).
+          const core = Math.min(97, l + 16 + i * 26);
+          const coreSat = i >= 0.75 ? s * (1 - (i - 0.75) * 2.4) : s;
+          const g = ctx.createRadialGradient(nx - r * 0.38, ny - r * 0.38, r * 0.05, nx, ny, r * 1.05);
+          g.addColorStop(0, `hsl(${h} ${Math.max(0, coreSat)}% ${core}% / ${a})`);
+          g.addColorStop(0.55, `hsl(${h} ${s}% ${l}% / ${a})`);
+          g.addColorStop(1, `hsl(${h} ${s}% ${Math.max(4, l - 16)}% / ${a})`);
+          ctx.fillStyle = g;
+        } else {
+          ctx.fillStyle = `hsl(${h} ${s}% ${l}% / ${a})`;
+        }
+      }
       ctx.fill();
       ctx.shadowBlur = 0;
     }
@@ -194,8 +340,8 @@ export const GraphView: Component<{
       if (!showLabel) continue;
       const fs = 11 / k;
       ctx.font = `${fs}px ui-sans-serif, system-ui, sans-serif`;
-      const x = n.x!;
-      const y = n.y! + r + 3 / k;
+      const x = dispX(n, c, s2);
+      const y = dispY(n, c, s2) + r + 3 / k;
       ctx.lineWidth = 3 / k;
       ctx.strokeStyle = C.bg;
       ctx.strokeText(n.label, x, y);
@@ -206,8 +352,8 @@ export const GraphView: Component<{
     ctx.restore();
   }
 
-  function loop() {
-    if (sim) {
+  function loop(t?: number) {
+    if (sim && (running || dragNode)) {
       sim.tick();
       if (!fitted && sim.alpha() < 0.15) {
         fitToView();
@@ -215,9 +361,17 @@ export const GraphView: Component<{
       }
       if (sim.alpha() < 0.005 && !dragNode) running = false;
     }
+    // Rotación del sistema: pausada al hacer hover en un nodo, al arrastrar o con la pestaña oculta.
+    if (spin() && !dragNode && !hovered && !document.hidden) {
+      const now = t ?? lastT;
+      if (lastT) angle = (angle + (now - lastT) * OMEGA) % TAU;
+      lastT = now;
+    } else {
+      lastT = t ?? lastT;
+    }
     draw();
-    if (running || dragNode) raf = requestAnimationFrame(loop);
-    else raf = 0;
+    if (running || dragNode || (spin() && !document.hidden)) raf = requestAnimationFrame(loop);
+    else { raf = 0; lastT = 0; }
   }
 
   function kick(alpha = 0.3) {
@@ -254,6 +408,20 @@ export const GraphView: Component<{
     return { nodes: ns, links: ls };
   }
 
+  // Gravedad radial: los soles caen al núcleo (radio ~0) y los huérfanos orbitan en el borde.
+  function radialForce() {
+    return forceRadial<GraphNode>((d) => systemR * Math.pow(1 - imp(d), 1.3), 0, 0).strength((d) => {
+      const i = imp(d);
+      // Fuerte en el núcleo (fija los soles) y en el borde (mantiene huérfanos en órbita),
+      // floja en el medio para que los enlaces formen los cúmulos locales.
+      return gravity() * (0.55 + Math.abs(i - 0.5) * 1.5);
+    });
+  }
+  // Carga: los soles pesan más → repelen más fuerte y despejan su vecindad.
+  function chargeForce() {
+    return forceManyBody<GraphNode>().strength((d) => -repel() * (1 + imp(d) * 2)).distanceMax(1400);
+  }
+
   function rebuild() {
     const g = filterGraph();
     const prev = new Map(nodes.map((n) => [n.id, n]));
@@ -263,6 +431,25 @@ export const GraphView: Component<{
     });
     links = g.links;
     setNodeCount(nodes.length);
+    // Importancia normalizada y radio del sistema (crece con la cantidad de nodos).
+    maxWeight = 1;
+    centerNode = null;
+    let bestW = 0;
+    for (const n of nodes) {
+      const wgt = weight(n);
+      if (wgt > maxWeight) maxWeight = wgt;
+      if (n.degree > 0 && wgt > bestW) { bestW = wgt; centerNode = n; }
+    }
+    systemR = 90 + Math.sqrt(nodes.length) * 42;
+    // El Sol: la nota más referenciada queda fija en el centro, inmóvil, mientras el resto orbita.
+    if (centerNode) {
+      centerNode.x = centerNode.y = 0;
+      centerNode.vx = centerNode.vy = 0;
+      centerNode.fx = centerNode.fy = 0;
+    }
+    // Un tono por carpeta, repartidos parejo en la rueda (+25° para esquivar el rojo del "seleccionado").
+    const groups = [...new Set(nodes.map((n) => n.group).filter((g): g is string => g != null))].sort();
+    groupHue = new Map(groups.map((g, idx) => [g, Math.round((idx / Math.max(1, groups.length)) * 360 + 25) % 360]));
     adj = new Map();
     for (const n of nodes) adj.set(n.id, new Set());
     const lid = (v: string | GraphNode) => (typeof v === "string" ? v : v.id);
@@ -280,10 +467,8 @@ export const GraphView: Component<{
       .strength(0.45);
     sim = forceSimulation(nodes)
       .force("link", linkForce)
-      .force("charge", forceManyBody().strength(-repel()).distanceMax(1400))
-      .force("center", forceCenter(0, 0))
-      .force("x", forceX(0).strength(centerForce()))
-      .force("y", forceY(0).strength(centerForce()))
+      .force("charge", chargeForce())
+      .force("radial", radialForce())
       .force("collide", forceCollide<GraphNode>().radius((d) => nodeRadius(d) + 32).strength(1))
       .alphaDecay(0.02);
     fitted = false;
@@ -299,6 +484,7 @@ export const GraphView: Component<{
     canvas.height = h * dpr;
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
+    genStars();
     if (tx === 0 && ty === 0) {
       tx = w / 2;
       ty = h / 2;
@@ -337,8 +523,9 @@ export const GraphView: Component<{
       if (n) {
         dragNode = n;
         const wp = toWorld(sx, sy);
-        n.fx = wp.x;
-        n.fy = wp.y;
+        const sp = toSim(wp.x, wp.y);
+        n.fx = sp.x;
+        n.fy = sp.y;
         kick(0.1);
       } else {
         panning = true;
@@ -354,8 +541,9 @@ export const GraphView: Component<{
 
       if (dragNode) {
         const wp = toWorld(sx, sy);
-        dragNode.fx = wp.x;
-        dragNode.fy = wp.y;
+        const sp = toSim(wp.x, wp.y);
+        dragNode.fx = sp.x;
+        dragNode.fy = sp.y;
         kick(0.1);
       } else if (panning) {
         tx += sx - last.x;
@@ -376,13 +564,27 @@ export const GraphView: Component<{
       canvas.releasePointerCapture(e.pointerId);
       if (dragNode) {
         if (!moved && dragNode.docId) props.onSelect(dragNode.docId);
-        dragNode.fx = null;
-        dragNode.fy = null;
+        if (dragNode === centerNode) {
+          dragNode.fx = 0; // el Sol vuelve a su lugar en el centro
+          dragNode.fy = 0;
+        } else {
+          dragNode.fx = null;
+          dragNode.fy = null;
+        }
         dragNode = null;
         kick(0.05);
       }
       panning = false;
     };
+
+    // Reanudar la rotación al volver a la pestaña (RAF se detiene mientras está oculta).
+    const onVis = () => {
+      if (spin() && !document.hidden && !raf) {
+        lastT = 0;
+        raf = requestAnimationFrame(loop);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
 
     canvas.addEventListener("wheel", onWheel, { passive: false });
     canvas.addEventListener("pointerdown", onDown);
@@ -393,6 +595,7 @@ export const GraphView: Component<{
       ro.disconnect();
       sim?.stop();
       if (raf) cancelAnimationFrame(raf);
+      document.removeEventListener("visibilitychange", onVis);
       canvas.removeEventListener("wheel", onWheel);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
@@ -419,12 +622,12 @@ export const GraphView: Component<{
 
   // Ajuste de fuerzas en vivo (sin reconstruir el grafo).
   createEffect(() => {
-    const r = repel(), ld = linkDist(), cf = centerForce();
+    const ld = linkDist();
+    repel(); gravity(); // dependencias reactivas
     if (!sim) return;
-    sim.force("charge", forceManyBody().strength(-r).distanceMax(1400));
+    sim.force("charge", chargeForce());
     linkForce?.distance((l) => ld + ((l.source as GraphNode).degree + (l.target as GraphNode).degree) * 3);
-    sim.force("x", forceX(0).strength(cf));
-    sim.force("y", forceY(0).strength(cf));
+    sim.force("radial", radialForce());
     kick(0.4);
   });
 
@@ -434,6 +637,14 @@ export const GraphView: Component<{
     search();
     labelMode();
     if (sim && !running) draw();
+  });
+
+  // Arrancar el bucle de rotación al activarla (si el RAF estaba detenido).
+  createEffect(() => {
+    if (spin() && !document.hidden && !raf) {
+      lastT = 0;
+      raf = requestAnimationFrame(loop);
+    }
   });
 
   return (
@@ -446,7 +657,8 @@ export const GraphView: Component<{
         labelMode={labelMode} setLabelMode={setLabelMode}
         repel={repel} setRepel={setRepel}
         linkDist={linkDist} setLinkDist={setLinkDist}
-        centerForce={centerForce} setCenterForce={setCenterForce}
+        gravity={gravity} setGravity={setGravity}
+        spin={spin} setSpin={setSpin}
         onReset={resetSettings}
       />
       <div class="pointer-events-none absolute bottom-3 left-3 text-xs text-muted-foreground">
