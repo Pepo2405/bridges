@@ -126,7 +126,7 @@ export function extractSection(content: string, heading: string): string | null 
 }
 
 /** Flipea [ ]<->[x] en la n-ésima tarea (bullet u ordenada) del markdown (orden de
- *  salteando code fences). Devuelve md sin cambios si n está fuera de rango. */
+ *  documento, salteando code fences). Devuelve md sin cambios si n está fuera de rango. */
 export function toggleTaskAtIndex(md: string, n: number): string {
   const lines = md.split("\n");
   let inFence = false;
