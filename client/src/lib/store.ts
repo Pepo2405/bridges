@@ -1003,7 +1003,10 @@ export async function updateConnection(
     const wasActive = state.activeVault === vault;
     await closeSession(vault);
     await openSession({ vault, serverUrl: nextServerUrl });
-    if (wasActive) setState("activeVault", vault);
+    if (wasActive) {
+      setState("activeVault", vault);
+      await configSetLastVault(vault);
+    }
   }
 }
 
