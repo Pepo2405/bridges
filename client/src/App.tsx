@@ -104,10 +104,11 @@ function hostOf(serverUrl: string): string {
 }
 
 /**
- * Etiqueta de una conexión (local path) para el switcher/gestor: si la sesión
- * está abierta y el server reportó su vault, muestra `Vault @ host`; si no,
- * cae al basename local. OJO: `vaultName(path)` es el basename LOCAL, distinto
- * del campo `vaultName` que devuelve el server.
+ * Etiqueta de una conexión (local path) para el switcher/gestor: si tiene un
+ * nombre custom (Connection.name) se usa ese; si no, y la sesión está abierta y
+ * el server reportó su vault, muestra `Vault @ host`; si no, cae al basename
+ * local. OJO: `vaultName(path)` es el basename LOCAL, distinto del campo
+ * `vaultName` que devuelve el server.
  */
 function vaultLabel(localPath: string): string {
   const custom = state.connections.find((c) => c.vault === localPath)?.name;
