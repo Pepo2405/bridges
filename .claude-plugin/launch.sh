@@ -5,7 +5,7 @@
 set -eu
 
 VERSION="0.1.0"                 # mantener sincronizado con plugin.json / tag mcp-v<VERSION>
-REPO="SoPxsol/forge"
+REPO="Pepo2405/bridges"
 TAG="mcp-v${VERSION}"
 
 os="$(uname -s)"; arch="$(uname -m)"
