@@ -7,15 +7,18 @@
  *   - get_backlinks  notas que enlazan a una (grafo de [[wikilinks]])
  *   - list_links     notas a las que una enlaza (con links rotos marcados)
  *   - list_vaults    vaults configurados en la app de Bridges (nombre, ruta, default)
- * Cada tool corre contra el disco local (si hay BRIDGES_VAULT_DIR) o por HTTP.
+ * Cada tool corre contra el disco local (si resolveVaultDir resuelve un vault) o por HTTP.
  *
  * Config por env:
  *   BRIDGES_URL          base del server (default http://localhost:4321)
  *   BRIDGES_TOKEN        Bearer token del vault (opcional si el server corre sin auth)
- *   BRIDGES_VAULT_DIR    raíz del vault en disco. Si está, la búsqueda corre contra
- *                      un índice FTS local (sub-ms, offline) en vez de HTTP, y los
- *                      hits incluyen el path absoluto local para abrirlos con Read.
- *   BRIDGES_LOCAL_SEARCH =0 fuerza el camino HTTP aunque haya BRIDGES_VAULT_DIR.
+ *   BRIDGES_VAULT_DIR    override manual de la raíz del vault en disco: uno de los
+ *                      inputs de la cascada resolveVaultDir() (.bridges del repo
+ *                      consumidor → BRIDGES_VAULT_DIR → vault por default de la app).
+ *                      Si la cascada resuelve un dir, la búsqueda corre contra un
+ *                      índice FTS local (sub-ms, offline) en vez de HTTP, y los hits
+ *                      incluyen el path absoluto local para abrirlos con Read.
+ *   BRIDGES_LOCAL_SEARCH =0 fuerza el camino HTTP aunque se haya resuelto un vault local.
  *
  * El vault lo determina el token; sin token, el server usa `default`.
  */

@@ -1,4 +1,4 @@
-/** Acceso al vault: índice/disco local (si hay BRIDGES_VAULT_DIR) o HTTP al server. */
+/** Acceso al vault: índice/disco local (si resolveVaultDir resuelve un vault) o HTTP al server. */
 import { readFileSync } from "node:fs";
 import { join, normalize, sep, basename } from "node:path";
 import { deriveTitle } from "../../server/src/search-common";
@@ -12,7 +12,7 @@ export type SearchHit = {
   path: string;
   title: string | null;
   snippet: string;
-  /** Ruta absoluta en disco, si BRIDGES_VAULT_DIR está seteado. El agente la abre con Read. */
+  /** Ruta absoluta en disco, si se resolvió un vault en disco (ver resolveVaultDir). El agente la abre con Read. */
   localPath?: string;
 };
 
@@ -55,8 +55,9 @@ export function resolveVaultDir(cwd: string = process.cwd()): string | null {
 
 // Raíz del vault resuelta una vez al arrancar el proceso (cwd = repo consumidor).
 const VAULT_DIR = resolveVaultDir() ?? undefined;
-// Con BRIDGES_VAULT_DIR seteado, la búsqueda corre contra un índice FTS local
-// (sub-ms, offline). Poné BRIDGES_LOCAL_SEARCH=0 para forzar siempre el camino HTTP.
+// Si se resolvió un vault en disco (ver resolveVaultDir), la búsqueda corre contra un
+// índice FTS local (sub-ms, offline). Poné BRIDGES_LOCAL_SEARCH=0 para forzar siempre
+// el camino HTTP.
 const USE_LOCAL = !!VAULT_DIR && process.env.BRIDGES_LOCAL_SEARCH !== "0";
 
 async function searchHttp(query: string, limit: number): Promise<SearchHit[]> {
