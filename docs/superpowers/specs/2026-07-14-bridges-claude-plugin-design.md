@@ -102,16 +102,17 @@ Módulo puro, testeable, sin dependencia del resto del MCP.
 ```ts
 export type VaultConn = { name: string; path: string; serverUrl: string | null; isDefault: boolean };
 
-/** Ruta del bridges.json (config dir de la app Tauri). Orden:
+/** Ruta del bridges.json (config dir de la app Tauri, identifier `com.pepo.bridges`,
+ *  confirmado en skills/bridges-docs/scripts/vault-path.sh). Orden:
  *  1. env BRIDGES_CONFIG (test/override)
- *  2. macOS:  ~/Library/Application Support/com.pxsol.bridges/bridges.json
- *  3. Linux:  ${XDG_CONFIG_HOME:-~/.config}/com.pxsol.bridges/bridges.json
- *  4. Windows: %APPDATA%/com.pxsol.bridges/bridges.json
+ *  2. macOS:  ~/Library/Application Support/com.pepo.bridges/bridges.json
+ *  3. Linux:  ${XDG_CONFIG_HOME:-~/.config}/com.pepo.bridges/bridges.json
  */
-export function configPath(): string
+export function configPath(): string | null
 /** Lee y parsea. Devuelve [] si no existe o no parsea (nunca lanza). */
 export function readVaults(): VaultConn[]
-/** Ruta local del default (lastVault), o null. */
+/** Ruta local del default: lastVault, o la primera connection con vault (igual que
+ *  vault-path.sh). null si no hay ninguna. */
 export function defaultVaultDir(): string | null
 ```
 
@@ -335,9 +336,9 @@ Baseline del repo: `cd mcp && bun test` (el MCP ya tiene `localIndex.test.ts`).
   instale esa versión.
 - **Tamaño del binario:** cada binario `--compile` pesa ~60-90MB. Vive en el
   Release (no en git) y en `~/.cache` del consumidor; aceptable.
-- **Config path cross-platform:** `configPath()` cubre mac/Linux/Windows por
-  convención Tauri, pero solo se validará en mac (entorno del equipo). El
-  `BRIDGES_CONFIG` override cubre tests y casos raros.
+- **Config path:** `configPath()` cubre mac/Linux con el identifier
+  `com.pepo.bridges` (mismo que `vault-path.sh`), validado solo en mac (entorno
+  del equipo). El `BRIDGES_CONFIG` override cubre tests y casos raros.
 - **`${CLAUDE_PLUGIN_ROOT}`:** se asume que Claude Code expone esa variable a los
   `mcpServers` del plugin (como en la doc de plugins). A verificar en el smoke test;
   si no, se usa ruta relativa al plugin por otro mecanismo soportado.
