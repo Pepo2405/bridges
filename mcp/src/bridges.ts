@@ -1,9 +1,10 @@
 /** Acceso al vault: índice/disco local (si hay BRIDGES_VAULT_DIR) o HTTP al server. */
 import { readFileSync } from "node:fs";
-import { join, normalize, sep } from "node:path";
+import { join, normalize, sep, basename } from "node:path";
 import { deriveTitle } from "../../server/src/search-common";
 import { searchLocal, walkMd } from "./localIndex";
 import type { DocLite } from "./graph";
+import { defaultVaultDir, readVaults } from "./config";
 
 export type SearchHit = {
   /** Id del doc (solo modo HTTP; el modo local identifica por path). Opcional, no se expone al agente. */
@@ -29,9 +30,31 @@ type SyncDoc = { id: string; path: string; title: string | null; content: string
 
 const BASE = (process.env.BRIDGES_URL ?? "http://localhost:4321").replace(/\/+$/, "");
 const TOKEN = process.env.BRIDGES_TOKEN;
-// Raíz del vault en disco. Si está, search_vault devuelve el path absoluto local
-// para que el agente lea la nota del disco (con Read) en vez de traerla por HTTP.
-const VAULT_DIR = process.env.BRIDGES_VAULT_DIR;
+export type BridgesMarker = { vault?: string; folder?: string };
+
+/** Lee el marcador .bridges del repo consumidor. null si no existe o no parsea. */
+export function readMarker(cwd: string = process.cwd()): BridgesMarker | null {
+  try {
+    return JSON.parse(readFileSync(join(cwd, ".bridges"), "utf8")) as BridgesMarker;
+  } catch {
+    return null;
+  }
+}
+
+/** Cascada: .bridges (por name o basename) → BRIDGES_VAULT_DIR → lastVault. null → HTTP. */
+export function resolveVaultDir(cwd: string = process.cwd()): string | null {
+  const marker = readMarker(cwd);
+  if (marker?.vault) {
+    const hit = readVaults().find((v) => v.name === marker.vault || basename(v.path) === marker.vault);
+    if (hit) return hit.path;
+    console.error(`[bridges-mcp] .bridges nombra un vault desconocido: "${marker.vault}"; uso el default.`);
+  }
+  if (process.env.BRIDGES_VAULT_DIR) return process.env.BRIDGES_VAULT_DIR;
+  return defaultVaultDir();
+}
+
+// Raíz del vault resuelta una vez al arrancar el proceso (cwd = repo consumidor).
+const VAULT_DIR = resolveVaultDir() ?? undefined;
 // Con BRIDGES_VAULT_DIR seteado, la búsqueda corre contra un índice FTS local
 // (sub-ms, offline). Poné BRIDGES_LOCAL_SEARCH=0 para forzar siempre el camino HTTP.
 const USE_LOCAL = !!VAULT_DIR && process.env.BRIDGES_LOCAL_SEARCH !== "0";
