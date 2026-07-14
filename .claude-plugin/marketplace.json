@@ -1,0 +1,11 @@
+{
+  "name": "bridges",
+  "owner": { "name": "Bridges — PXSOL" },
+  "plugins": [
+    {
+      "name": "bridges",
+      "source": "./",
+      "description": "MCP read-only del vault + skill bridges-docs + /bridges + agente doc-writer."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "bridges",
+  "version": "0.1.0",
+  "description": "Vault de documentación del equipo (Obsidian self-hosteado) como capacidad de Claude Code: MCP read-only para buscar/leer/navegar el vault, skill para documentar repos, command /bridges y agente doc-writer. El repo consumidor declara su vault en .bridges.",
+  "author": { "name": "Bridges — PXSOL" },
+  "keywords": ["docs", "vault", "obsidian", "mcp", "knowledge-base"],
+  "mcpServers": {
+    "bridges": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/launch.sh"
+    }
+  }
+}
