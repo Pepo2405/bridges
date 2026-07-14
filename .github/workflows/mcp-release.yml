@@ -1,0 +1,29 @@
+name: mcp-release
+on:
+  push:
+    tags: ["mcp-v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-14, target: bun-darwin-arm64, out: bridges-mcp-darwin-arm64 }
+          - { runner: macos-13, target: bun-darwin-x64,   out: bridges-mcp-darwin-x64 }
+          - { runner: ubuntu-latest, target: bun-linux-x64, out: bridges-mcp-linux-x64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: cd mcp && bun install --frozen-lockfile || bun install
+      - name: Compile
+        run: |
+          cd mcp
+          bun build --compile --target=${{ matrix.target }} ./src/index.ts --outfile ${{ matrix.out }}
+          ./${{ matrix.out }} --help >/dev/null 2>&1 || true
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: mcp/${{ matrix.out }}
