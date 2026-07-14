@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 /**
  * Servidor MCP de SOLO LECTURA para Bridges: expone el vault del bridges-server a
- * un agente (Claude Code) con cuatro tools, así no tiene que grepear el disco:
+ * un agente (Claude Code) con cinco tools, así no tiene que grepear el disco:
  *   - search_vault   búsqueda full-text rankeada (FTS5/BM25) con snippets
  *   - read_note      contenido completo de una nota por su path
  *   - get_backlinks  notas que enlazan a una (grafo de [[wikilinks]])
  *   - list_links     notas a las que una enlaza (con links rotos marcados)
+ *   - list_vaults    vaults configurados en la app de Bridges (nombre, ruta, default)
  * Cada tool corre contra el disco local (si hay BRIDGES_VAULT_DIR) o por HTTP.
  *
  * Config por env:
@@ -23,6 +24,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { searchVault, readNote, allDocs } from "./bridges";
 import { getBacklinks, getOutgoingLinks } from "./graph";
+import { readVaults, formatVaults } from "./config";
 
 const server = new McpServer({ name: "bridges-mcp", version: "0.1.0" });
 
@@ -161,6 +163,25 @@ server.registerTool(
         content: [{ type: "text", text: `Error al listar links de "${path}": ${e instanceof Error ? e.message : String(e)}` }],
       };
     }
+  },
+);
+
+server.registerTool(
+  "list_vaults",
+  {
+    title: "Listar los vaults de Bridges configurados",
+    description:
+      "Devuelve los vaults que el usuario tiene configurados en la app de Bridges " +
+      "(nombre, ruta local y cuál es el default). Read-only, no expone tokens. Usalo " +
+      "para saber a qué vault leer/escribir cuando el repo no tiene .bridges o hay ambigüedad.",
+    inputSchema: {},
+  },
+  async () => {
+    const vaults = readVaults();
+    if (!vaults.length) {
+      return { content: [{ type: "text", text: "No hay vaults configurados en la app de Bridges." }] };
+    }
+    return { content: [{ type: "text", text: `${vaults.length} vault(s):\n\n${formatVaults(vaults)}` }] };
   },
 );
 
