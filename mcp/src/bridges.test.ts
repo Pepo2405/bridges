@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveVaultDir, readMarker } from "./bridges";
+import { resolveVaultDir, readMarker, resolveNamedVault, searchVault } from "./bridges";
 
 let repo: string;   // cwd simulado del consumidor
 let cfgDir: string; // dir del bridges.json
@@ -68,5 +68,27 @@ describe("resolveVaultDir cascada", () => {
   test("5) null si nada resuelve (fuerza HTTP)", () => {
     process.env.BRIDGES_CONFIG = join(cfgDir, "no.json");
     expect(resolveVaultDir(repo)).toBeNull();
+  });
+});
+
+describe("resolveNamedVault", () => {
+  test("resuelve por name", () => {
+    writeConfig({ connections: [{ vault: "/v/px", name: "Px", openedAt: "x" }], lastVault: "/v/px" });
+    expect(resolveNamedVault("Px")).toBe("/v/px");
+  });
+  test("resuelve por basename del path cuando no hay name", () => {
+    writeConfig({ connections: [{ vault: "/vaults/equipo", openedAt: "x" }], lastVault: "/vaults/equipo" });
+    expect(resolveNamedVault("equipo")).toBe("/vaults/equipo");
+  });
+  test("null si el vault no está configurado", () => {
+    writeConfig({ connections: [{ vault: "/v/a", name: "A", openedAt: "x" }], lastVault: "/v/a" });
+    expect(resolveNamedVault("NoExiste")).toBeNull();
+  });
+});
+
+describe("searchVault con vault por nombre", () => {
+  test("rechaza con vault desconocido (no toca disco)", async () => {
+    writeConfig({ connections: [{ vault: "/v/a", name: "A", openedAt: "x" }], lastVault: "/v/a" });
+    await expect(searchVault("hola", 5, undefined, "NoExiste")).rejects.toThrow(/vault desconocido/i);
   });
 });

@@ -41,24 +41,40 @@ export function readMarker(cwd: string = process.cwd()): BridgesMarker | null {
   }
 }
 
+/** Resuelve el path en disco de un vault configurado por su name o el basename de su
+ *  path. null si no está en bridges.json. */
+export function resolveNamedVault(name: string): string | null {
+  const hit = readVaults().find((v) => v.name === name || basename(v.path) === name);
+  return hit ? hit.path : null;
+}
+
 /** Cascada: .bridges (por name o basename) → BRIDGES_VAULT_DIR → lastVault. null → HTTP. */
 export function resolveVaultDir(cwd: string = process.cwd()): string | null {
   const marker = readMarker(cwd);
   if (marker?.vault) {
-    const hit = readVaults().find((v) => v.name === marker.vault || basename(v.path) === marker.vault);
-    if (hit) return hit.path;
+    const hit = resolveNamedVault(marker.vault);
+    if (hit) return hit;
     console.error(`[bridges-mcp] .bridges nombra un vault desconocido: "${marker.vault}"; uso el default.`);
   }
   if (process.env.BRIDGES_VAULT_DIR) return process.env.BRIDGES_VAULT_DIR;
   return defaultVaultDir();
 }
 
+/** Dir efectivo para una consulta: el vault nombrado (si se pasó) o el resuelto al
+ *  arrancar. Lanza si `vault` no corresponde a ningún vault configurado. */
+function effectiveVaultDir(vault?: string): string | undefined {
+  if (!vault) return VAULT_DIR;
+  const dir = resolveNamedVault(vault);
+  if (!dir) throw new Error(`vault desconocido: "${vault}". Usá list_vaults para ver los disponibles.`);
+  return dir;
+}
+
 // Raíz del vault resuelta una vez al arrancar el proceso (cwd = repo consumidor).
 const VAULT_DIR = resolveVaultDir() ?? undefined;
-// Si se resolvió un vault en disco (ver resolveVaultDir), la búsqueda corre contra un
-// índice FTS local (sub-ms, offline). Poné BRIDGES_LOCAL_SEARCH=0 para forzar siempre
-// el camino HTTP.
-const USE_LOCAL = !!VAULT_DIR && process.env.BRIDGES_LOCAL_SEARCH !== "0";
+// Si se resolvió un vault en disco (el default de arranque o uno nombrado por consulta),
+// la búsqueda corre contra un índice FTS local (sub-ms, offline). Poné
+// BRIDGES_LOCAL_SEARCH=0 para forzar siempre el camino HTTP.
+const LOCAL_ENABLED = process.env.BRIDGES_LOCAL_SEARCH !== "0";
 
 async function searchHttp(query: string, limit: number): Promise<SearchHit[]> {
   const headers: Record<string, string> = {};
@@ -72,19 +88,29 @@ async function searchHttp(query: string, limit: number): Promise<SearchHit[]> {
   }));
 }
 
-export async function searchVault(query: string, limit: number, pathPrefix?: string): Promise<SearchHit[]> {
+export async function searchVault(
+  query: string,
+  limit: number,
+  pathPrefix?: string,
+  vault?: string,
+): Promise<SearchHit[]> {
+  const dir = effectiveVaultDir(vault);
   // Con filtro de path traemos el cap de resultados crudos (50) y recortamos a
   // `limit` después de filtrar; sin filtro, pedimos directamente `limit`.
   const fetchN = pathPrefix ? 50 : limit;
   let hits: SearchHit[];
-  if (USE_LOCAL) {
+  if (dir && LOCAL_ENABLED) {
     try {
-      hits = searchLocal(VAULT_DIR!, query, fetchN);
+      hits = searchLocal(dir, query, fetchN);
     } catch (e) {
       // El índice local falló (dir inaccesible, etc.): caemos al server por HTTP.
+      // Con vault nombrado no hay fallback: el server HTTP es un solo vault (por token).
+      if (vault) throw e;
       console.error(`[bridges-mcp] índice local falló, usando HTTP: ${e instanceof Error ? e.message : e}`);
       hits = await searchHttp(query, fetchN);
     }
+  } else if (vault) {
+    throw new Error(`no puedo buscar en el vault "${vault}" en modo HTTP: el server sirve un solo vault (por token).`);
   } else {
     hits = await searchHttp(query, fetchN);
   }
@@ -136,10 +162,12 @@ async function readNoteHttp(path: string): Promise<NoteContent | null> {
 
 /**
  * Lee el contenido completo de una nota por su path relativo. Modo local lee del
- * disco; modo HTTP la trae de /sync. Mismo flag que la búsqueda (USE_LOCAL).
+ * disco; modo HTTP la trae de /sync. `vault` opcional selecciona un vault nombrado.
  */
-export async function readNote(path: string): Promise<NoteContent | null> {
-  if (USE_LOCAL) return readNoteLocal(VAULT_DIR!, path);
+export async function readNote(path: string, vault?: string): Promise<NoteContent | null> {
+  const dir = effectiveVaultDir(vault);
+  if (dir && LOCAL_ENABLED) return readNoteLocal(dir, path);
+  if (vault) throw new Error(`no puedo leer del vault "${vault}" en modo HTTP: el server sirve un solo vault (por token).`);
   return readNoteHttp(path);
 }
 
@@ -154,8 +182,11 @@ function allDocsLocal(vaultDir: string): DocLite[] {
 /**
  * Todos los docs vivos del vault. Modo local recorre el disco; modo HTTP usa
  * /sync. backlinks/links necesitan el vault completo (saber quién enlaza a quién).
+ * `vault` opcional selecciona un vault nombrado.
  */
-export async function allDocs(): Promise<DocLite[]> {
-  if (USE_LOCAL) return allDocsLocal(VAULT_DIR!);
+export async function allDocs(vault?: string): Promise<DocLite[]> {
+  const dir = effectiveVaultDir(vault);
+  if (dir && LOCAL_ENABLED) return allDocsLocal(dir);
+  if (vault) throw new Error(`no puedo leer del vault "${vault}" en modo HTTP: el server sirve un solo vault (por token).`);
   return (await fetchSyncDocs()).map((d) => ({ path: d.path, title: d.title, content: d.content }));
 }

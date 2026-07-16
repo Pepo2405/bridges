@@ -47,11 +47,15 @@ server.registerTool(
         .string()
         .optional()
         .describe("Filtra los resultados a notas cuyo path empieza con este prefijo (p. ej. '01 - Proyectos/')."),
+      vault: z
+        .string()
+        .optional()
+        .describe("Nombre del vault donde buscar (ver list_vaults). Por defecto usa el vault del repo/default."),
     },
   },
-  async ({ query, limit, pathPrefix }) => {
+  async ({ query, limit, pathPrefix, vault }) => {
     try {
-      const hits = await searchVault(query, limit ?? 10, pathPrefix);
+      const hits = await searchVault(query, limit ?? 10, pathPrefix, vault);
       if (!hits.length) {
         return { content: [{ type: "text", text: `Sin resultados para "${query}".` }] };
       }
@@ -79,11 +83,15 @@ server.registerTool(
         .string()
         .min(1)
         .describe("Ruta relativa de la nota dentro del vault, p. ej. '01 - Proyectos/forge/index.md'."),
+      vault: z
+        .string()
+        .optional()
+        .describe("Nombre del vault a leer (ver list_vaults). Por defecto usa el vault del repo/default."),
     },
   },
-  async ({ path }) => {
+  async ({ path, vault }) => {
     try {
-      const note = await readNote(path);
+      const note = await readNote(path, vault);
       if (!note) {
         return { content: [{ type: "text", text: `No existe la nota "${path}".` }] };
       }
@@ -108,11 +116,15 @@ server.registerTool(
       "path y título de cada nota que la referencia.",
     inputSchema: {
       path: z.string().min(1).describe("Ruta relativa de la nota destino dentro del vault."),
+      vault: z
+        .string()
+        .optional()
+        .describe("Nombre del vault (ver list_vaults). Por defecto usa el vault del repo/default."),
     },
   },
-  async ({ path }) => {
+  async ({ path, vault }) => {
     try {
-      const docs = await allDocs();
+      const docs = await allDocs(vault);
       if (!docs.some((d) => d.path === path)) {
         return { content: [{ type: "text", text: `No existe la nota "${path}".` }] };
       }
@@ -140,11 +152,15 @@ server.registerTool(
       "los links rotos (sin nota destino). Útil para navegar el grafo hacia adelante.",
     inputSchema: {
       path: z.string().min(1).describe("Ruta relativa de la nota origen dentro del vault."),
+      vault: z
+        .string()
+        .optional()
+        .describe("Nombre del vault (ver list_vaults). Por defecto usa el vault del repo/default."),
     },
   },
-  async ({ path }) => {
+  async ({ path, vault }) => {
     try {
-      const docs = await allDocs();
+      const docs = await allDocs(vault);
       if (!docs.some((d) => d.path === path)) {
         return { content: [{ type: "text", text: `No existe la nota "${path}".` }] };
       }
