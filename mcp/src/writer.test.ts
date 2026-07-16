@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { slug, snapshot, historyDir, createNote } from "./writer";
+import { slug, snapshot, historyDir, createNote, updateNote } from "./writer";
 
 describe("slug", () => {
   test("normaliza título a nombre de archivo", () => {
@@ -99,5 +99,29 @@ describe("createNote", () => {
     expect(r.action).toBe("created");
     expect(readFileSync(join(dir, "n.md"), "utf8")).toBe("v2");
     expect(readdirSync(historyDir(dir, "n.md")).length).toBe(1); // snapshot de v1
+  });
+});
+
+describe("updateNote overwrite/append", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bridges-w-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  test("overwrite reemplaza el cuerpo entero y snapshotea", () => {
+    createNote(dir, { title: "T", content: "viejo", path: "n" });
+    const r = updateNote(dir, { path: "n.md", mode: "overwrite", content: "nuevo" });
+    expect(r).toMatchObject({ path: "n.md", action: "updated", mode: "overwrite" });
+    expect(readFileSync(join(dir, "n.md"), "utf8")).toBe("nuevo");
+    expect(readdirSync(historyDir(dir, "n.md")).length).toBe(1);
+  });
+
+  test("append agrega al final con salto de línea", () => {
+    createNote(dir, { title: "T", content: "línea 1", path: "n" });
+    updateNote(dir, { path: "n.md", mode: "append", content: "línea 2" });
+    expect(readFileSync(join(dir, "n.md"), "utf8")).toBe("línea 1\nlínea 2");
+  });
+
+  test("nota inexistente lanza", () => {
+    expect(() => updateNote(dir, { path: "no.md", mode: "overwrite", content: "x" })).toThrow(/no existe/i);
   });
 });

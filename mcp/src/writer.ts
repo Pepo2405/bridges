@@ -83,3 +83,24 @@ export function createNote(
   const bytes = writeFileEnsured(abs, args.content);
   return { path: rel, title: deriveTitle(args.content, rel), action: "created", bytes };
 }
+
+export function updateNote(
+  vaultDir: string,
+  args: { path: string; mode: "overwrite" | "append" | "patch"; content: string; heading?: string },
+): WriteResult {
+  const rel = args.path;
+  const abs = resolveInVault(vaultDir, rel);
+  if (!existsSync(abs)) throw new Error(`no existe la nota "${rel}".`);
+  snapshot(vaultDir, rel);
+  let next: string;
+  if (args.mode === "overwrite") {
+    next = args.content;
+  } else if (args.mode === "append") {
+    const prev = readFileSync(abs, "utf8");
+    next = prev.endsWith("\n") ? prev + args.content : `${prev}\n${args.content}`;
+  } else {
+    throw new Error(`modo patch: implementado en patchSection (ver updateNote patch).`);
+  }
+  const bytes = writeFileEnsured(abs, next);
+  return { path: rel, title: deriveTitle(next, rel), action: "updated", mode: args.mode, bytes };
+}
