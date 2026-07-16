@@ -55,11 +55,13 @@ describe("snapshot", () => {
     expect(existsSync(escaped)).toBe(false);
   });
 
-  test("dos snapshots en el mismo ms no se pisan", () => {
-    writeFileSync(join(dir, "n.md"), "v1", "utf8");
-    snapshot(dir, "n.md", 3000);
-    writeFileSync(join(dir, "n.md"), "v2", "utf8");
-    snapshot(dir, "n.md", 3000);
-    expect(readdirSync(historyDir(dir, "n.md")).length).toBe(2);
+  test("colisión de ms: el write más nuevo ordena DESPUÉS (rotación nunca lo poda antes)", () => {
+    const hdir = historyDir(dir, "n.md");
+    writeFileSync(join(dir, "n.md"), "v1", "utf8"); snapshot(dir, "n.md", 4000);
+    writeFileSync(join(dir, "n.md"), "v2", "utf8"); snapshot(dir, "n.md", 4000);
+    const files = readdirSync(hdir).sort();
+    expect(files.length).toBe(2);
+    expect(files[0] < files[1]).toBe(true);               // orden estable por escritura
+    expect(readFileSync(join(hdir, files[1]), "utf8")).toBe("v2"); // el último sort() es el más nuevo
   });
 });

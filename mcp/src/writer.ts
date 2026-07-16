@@ -46,9 +46,11 @@ export function snapshot(vaultDir: string, relPath: string, now: number = Date.n
   const hdir = historyDir(vaultDir, relPath);
   mkdirSync(hdir, { recursive: true });
   const base = stamp(now);
-  let name = `${base}.md`;
-  let n = 1;
-  while (existsSync(join(hdir, name))) name = `${base}-${n++}.md`;
+  // Sufijo de secuencia uniforme y zero-padded: desambigua colisiones del mismo ms
+  // y ordena SIEMPRE por (timestamp, secuencia) — el separador '.' es uniforme, así
+  // que el orden lexicográfico coincide con el cronológico (a diferencia de un `-N`).
+  const seq = readdirSync(hdir).filter((f) => f.startsWith(base + ".")).length;
+  const name = `${base}.${String(seq).padStart(3, "0")}.md`;
   writeFileSync(join(hdir, name), readFileSync(abs, "utf8"), "utf8");
   const files = readdirSync(hdir).sort();
   for (const f of files.slice(0, Math.max(0, files.length - 50))) {
