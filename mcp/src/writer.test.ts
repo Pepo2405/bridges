@@ -159,6 +159,14 @@ texto C
   test("heading inexistente lanza", () => {
     expect(() => patchSection(doc, "No Existe", "x")).toThrow(/heading/i);
   });
+
+  test("un '# comentario' dentro de un fence no corta la sección", () => {
+    const doc = "## Config\ntexto\n\n```bash\n# comentario de setup\necho hi\n```\n\n## Next\ncc\n";
+    const out = patchSection(doc, "Config", "NUEVO");
+    expect(out).toContain("## Config\n\nNUEVO");
+    expect(out).not.toContain("# comentario de setup"); // el fence es parte de Config → reemplazado
+    expect(out).toContain("## Next\ncc");                // Next intacta
+  });
 });
 
 describe("updateNote patch", () => {
@@ -179,5 +187,10 @@ describe("updateNote patch", () => {
   test("heading inexistente no crea nada y lanza", () => {
     createNote(dir, { title: "T", content: "# T\n\n## X\na\n", path: "n" });
     expect(() => updateNote(dir, { path: "n.md", mode: "patch", content: "z", heading: "NoExiste" })).toThrow(/heading/i);
+  });
+
+  test("patch sin heading lanza", () => {
+    createNote(dir, { title: "T", content: "# T\n\n## X\na\n", path: "n" });
+    expect(() => updateNote(dir, { path: "n.md", mode: "patch", content: "z" })).toThrow(/heading/i);
   });
 });

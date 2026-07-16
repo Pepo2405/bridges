@@ -87,17 +87,32 @@ export function createNote(
 /**
  * Reemplaza el cuerpo bajo `heading` (texto sin `#`) por `newBody`, hasta el próximo
  * heading de nivel igual o mayor (mismo nº de `#` o menos). Heading inexistente → throw.
+ * Consciente de code fences (```): las líneas dentro de un bloque de código no cuentan
+ * como headings (un `# comentario` en bash no corta la sección).
  */
 export function patchSection(content: string, heading: string, newBody: string): string {
   const lines = content.split("\n");
   const target = heading.replace(/^#+\s*/, "").trim();
-  const hIdx = lines.findIndex(
-    (l) => /^#{1,6}\s+/.test(l) && l.replace(/^#{1,6}\s+/, "").trim() === target,
-  );
+  // 1) localizar el heading, ignorando líneas dentro de fences
+  let inFence = false;
+  let hIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*```/.test(lines[i])) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    if (/^#{1,6}\s+/.test(lines[i]) && lines[i].replace(/^#{1,6}\s+/, "").trim() === target) {
+      hIdx = i;
+      break;
+    }
+  }
   if (hIdx === -1) throw new Error(`heading no encontrado: "${heading}"`);
   const level = lines[hIdx].match(/^#+/)![0].length;
+  // 2) fin de la sección: próximo heading de nivel <= level, también ignorando fences.
+  //    El heading en hIdx no está dentro de un fence, así que reiniciamos el estado.
   let end = lines.length;
+  inFence = false;
   for (let i = hIdx + 1; i < lines.length; i++) {
+    if (/^\s*```/.test(lines[i])) { inFence = !inFence; continue; }
+    if (inFence) continue;
     const m = lines[i].match(/^(#{1,6})\s+/);
     if (m && m[1].length <= level) { end = i; break; }
   }
