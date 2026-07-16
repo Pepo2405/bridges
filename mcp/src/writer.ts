@@ -6,7 +6,7 @@
 import {
   readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, renameSync, statSync, existsSync, appendFileSync,
 } from "node:fs";
-import { join, dirname, basename } from "node:path";
+import { join, dirname, basename, relative } from "node:path";
 import { deriveTitle } from "../../server/src/search-common";
 import { resolveInVault } from "./bridges";
 
@@ -24,9 +24,11 @@ export function slug(title: string): string {
   return s || "nota";
 }
 
-/** Dir de historial de una nota: .bridges/history/<relPath>/ */
+/** Dir de historial de una nota: .bridges/history/<relPath sanitizado>/. El destino
+ *  pasa por resolveInVault (misma guarda que la fuente) para bloquear traversal. */
 export function historyDir(vaultDir: string, relPath: string): string {
-  return join(vaultDir, VAULT_INTERNAL, "history", relPath);
+  const safeRel = relative(vaultDir, resolveInVault(vaultDir, relPath));
+  return join(vaultDir, VAULT_INTERNAL, "history", safeRel);
 }
 
 /** Timestamp filesystem-safe (sin `:` ni `.`). */
@@ -43,8 +45,12 @@ export function snapshot(vaultDir: string, relPath: string, now: number = Date.n
   if (!existsSync(abs)) return;
   const hdir = historyDir(vaultDir, relPath);
   mkdirSync(hdir, { recursive: true });
-  writeFileSync(join(hdir, `${stamp(now)}.md`), readFileSync(abs, "utf8"), "utf8");
-  const files = readdirSync(hdir).sort(); // ISO ordena cronológicamente
+  const base = stamp(now);
+  let name = `${base}.md`;
+  let n = 1;
+  while (existsSync(join(hdir, name))) name = `${base}-${n++}.md`;
+  writeFileSync(join(hdir, name), readFileSync(abs, "utf8"), "utf8");
+  const files = readdirSync(hdir).sort();
   for (const f of files.slice(0, Math.max(0, files.length - 50))) {
     rmSync(join(hdir, f), { force: true });
   }

@@ -36,9 +36,30 @@ describe("snapshot", () => {
     expect(existsSync(historyDir(dir, "nueva.md"))).toBe(false);
   });
 
-  test("rota a los 50 más nuevos", () => {
+  test("rota a los 50 más nuevos (deja los timestamps más nuevos)", () => {
     writeFileSync(join(dir, "n.md"), "x", "utf8");
     for (let i = 1; i <= 55; i++) snapshot(dir, "n.md", 1000 + i);
-    expect(readdirSync(historyDir(dir, "n.md")).length).toBe(50);
+    const files = readdirSync(historyDir(dir, "n.md")).sort();
+    expect(files.length).toBe(50);
+    // los 5 más viejos (now=1001..1005) se fueron; el más nuevo (1055) quedó
+    const stampOf = (ms: number) => new Date(ms).toISOString().replace(/[:.]/g, "-");
+    expect(files.some((f) => f.startsWith(stampOf(1001)))).toBe(false);
+    expect(files.some((f) => f.startsWith(stampOf(1055)))).toBe(true);
+  });
+
+  test("no escapa el vault con relPath de traversal", () => {
+    writeFileSync(join(dir, "n.md"), "data", "utf8");
+    snapshot(dir, "../../../n.md", 2000); // relPath malicioso
+    // el historial queda DENTRO del vault, no un nivel arriba
+    const escaped = join(dir, "..", ".bridges");
+    expect(existsSync(escaped)).toBe(false);
+  });
+
+  test("dos snapshots en el mismo ms no se pisan", () => {
+    writeFileSync(join(dir, "n.md"), "v1", "utf8");
+    snapshot(dir, "n.md", 3000);
+    writeFileSync(join(dir, "n.md"), "v2", "utf8");
+    snapshot(dir, "n.md", 3000);
+    expect(readdirSync(historyDir(dir, "n.md")).length).toBe(2);
   });
 });
