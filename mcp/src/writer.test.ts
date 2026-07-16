@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { slug, snapshot, historyDir, createNote, updateNote, patchSection } from "./writer";
+import { slug, snapshot, historyDir, createNote, updateNote, patchSection, deleteNote } from "./writer";
 
 describe("slug", () => {
   test("normaliza título a nombre de archivo", () => {
@@ -192,5 +192,26 @@ describe("updateNote patch", () => {
   test("patch sin heading lanza", () => {
     createNote(dir, { title: "T", content: "# T\n\n## X\na\n", path: "n" });
     expect(() => updateNote(dir, { path: "n.md", mode: "patch", content: "z" })).toThrow(/heading/i);
+  });
+});
+
+describe("deleteNote", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bridges-w-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  test("mueve a trash y registra en el manifest", () => {
+    createNote(dir, { title: "T", content: "borrame", path: "sub/n" });
+    const r = deleteNote(dir, "sub/n.md", 1000);
+    expect(r.action).toBe("trashed");
+    expect(existsSync(join(dir, "sub/n.md"))).toBe(false);
+    expect(existsSync(join(dir, r.trashPath))).toBe(true);
+    expect(readFileSync(join(dir, r.trashPath), "utf8")).toBe("borrame");
+    const manifest = readFileSync(join(dir, ".bridges/trash/manifest.jsonl"), "utf8").trim();
+    expect(JSON.parse(manifest)).toMatchObject({ path: "sub/n.md" });
+  });
+
+  test("nota inexistente lanza", () => {
+    expect(() => deleteNote(dir, "no.md")).toThrow(/no existe/i);
   });
 });

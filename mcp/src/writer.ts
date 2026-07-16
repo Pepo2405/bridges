@@ -34,6 +34,9 @@ export function historyDir(vaultDir: string, relPath: string): string {
 /** Resultado de una operación de escritura. */
 export type WriteResult = { path: string; title: string | null; action: string; mode?: string; bytes: number };
 
+/** Resultado de una operación de borrado. */
+export type DeleteResult = { path: string; action: "trashed"; trashPath: string };
+
 /** Timestamp filesystem-safe (sin `:` ni `.`). */
 function stamp(now: number): string {
   return new Date(now).toISOString().replace(/[:.]/g, "-");
@@ -144,4 +147,18 @@ export function updateNote(
   }
   const bytes = writeFileEnsured(abs, next);
   return { path: rel, title: deriveTitle(next, rel), action: "updated", mode: args.mode, bytes };
+}
+
+export function deleteNote(vaultDir: string, relPath: string, now: number = Date.now()): DeleteResult {
+  const abs = resolveInVault(vaultDir, relPath);
+  if (!existsSync(abs)) throw new Error(`no existe la nota "${relPath}".`);
+  const ts = stamp(now);
+  const trashRel = join(VAULT_INTERNAL, "trash", ts, relPath);
+  const trashAbs = resolveInVault(vaultDir, trashRel);
+  mkdirSync(dirname(trashAbs), { recursive: true });
+  renameSync(abs, trashAbs);
+  const manifestAbs = join(vaultDir, VAULT_INTERNAL, "trash", "manifest.jsonl");
+  mkdirSync(dirname(manifestAbs), { recursive: true });
+  appendFileSync(manifestAbs, JSON.stringify({ path: relPath, trashPath: trashRel, ts }) + "\n", "utf8");
+  return { path: relPath, action: "trashed", trashPath: trashRel };
 }
