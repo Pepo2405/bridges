@@ -31,6 +31,9 @@ export function historyDir(vaultDir: string, relPath: string): string {
   return join(vaultDir, VAULT_INTERNAL, "history", safeRel);
 }
 
+/** Resultado de una operación de escritura. */
+export type WriteResult = { path: string; title: string | null; action: string; mode?: string; bytes: number };
+
 /** Timestamp filesystem-safe (sin `:` ni `.`). */
 function stamp(now: number): string {
   return new Date(now).toISOString().replace(/[:.]/g, "-");
@@ -56,4 +59,27 @@ export function snapshot(vaultDir: string, relPath: string, now: number = Date.n
   for (const f of files.slice(0, Math.max(0, files.length - 50))) {
     rmSync(join(hdir, f), { force: true });
   }
+}
+
+/** Escribe `content` en `abs`, creando dirs; devuelve bytes escritos. */
+function writeFileEnsured(abs: string, content: string): number {
+  mkdirSync(dirname(abs), { recursive: true });
+  writeFileSync(abs, content, "utf8");
+  return Buffer.byteLength(content, "utf8");
+}
+
+export function createNote(
+  vaultDir: string,
+  args: { title: string; content: string; path?: string; folder?: string; overwrite?: boolean },
+): WriteResult {
+  const rel = args.path
+    ? (args.path.endsWith(".md") ? args.path : `${args.path}.md`)
+    : join(args.folder || "Memoria", `${slug(args.title)}.md`);
+  const abs = resolveInVault(vaultDir, rel);
+  if (existsSync(abs) && !args.overwrite) {
+    throw new Error(`ya existe una nota en "${rel}" (pasá overwrite:true para reemplazar).`);
+  }
+  snapshot(vaultDir, rel); // no-op si no existía
+  const bytes = writeFileEnsured(abs, args.content);
+  return { path: rel, title: deriveTitle(args.content, rel), action: "created", bytes };
 }

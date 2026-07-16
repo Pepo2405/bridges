@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { slug, snapshot, historyDir } from "./writer";
+import { slug, snapshot, historyDir, createNote } from "./writer";
 
 describe("slug", () => {
   test("normaliza título a nombre de archivo", () => {
@@ -63,5 +63,41 @@ describe("snapshot", () => {
     expect(files.length).toBe(2);
     expect(files[0] < files[1]).toBe(true);               // orden estable por escritura
     expect(readFileSync(join(hdir, files[1]), "utf8")).toBe("v2"); // el último sort() es el más nuevo
+  });
+});
+
+describe("createNote", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bridges-w-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  test("con path explícito escribe ahí y agrega .md", () => {
+    const r = createNote(dir, { title: "T", content: "cuerpo", path: "a/b/c" });
+    expect(r).toMatchObject({ path: "a/b/c.md", action: "created" });
+    expect(readFileSync(join(dir, "a/b/c.md"), "utf8")).toBe("cuerpo");
+  });
+
+  test("sin path usa Memoria/<slug(title)>.md", () => {
+    const r = createNote(dir, { title: "Mi Idea", content: "x" });
+    expect(r.path).toBe("Memoria/mi-idea.md");
+    expect(existsSync(join(dir, "Memoria/mi-idea.md"))).toBe(true);
+  });
+
+  test("respeta folder custom", () => {
+    const r = createNote(dir, { title: "Log", content: "x", folder: "Journal" });
+    expect(r.path).toBe("Journal/log.md");
+  });
+
+  test("colisión sin overwrite lanza con el path existente", () => {
+    createNote(dir, { title: "T", content: "v1", path: "n" });
+    expect(() => createNote(dir, { title: "T", content: "v2", path: "n" })).toThrow(/ya existe/i);
+  });
+
+  test("colisión con overwrite reemplaza (snapshotea el previo)", () => {
+    createNote(dir, { title: "T", content: "v1", path: "n" });
+    const r = createNote(dir, { title: "T", content: "v2", path: "n", overwrite: true });
+    expect(r.action).toBe("created");
+    expect(readFileSync(join(dir, "n.md"), "utf8")).toBe("v2");
+    expect(readdirSync(historyDir(dir, "n.md")).length).toBe(1); // snapshot de v1
   });
 });
