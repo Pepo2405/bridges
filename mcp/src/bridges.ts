@@ -122,7 +122,7 @@ export async function searchVault(
  * Resuelve un path relativo dentro de VAULT_DIR bloqueando traversal (../). Mismo
  * enfoque que server/src/vault.ts:resolveInVault. Lanza si el path escapa el vault.
  */
-function resolveInVault(vaultDir: string, relPath: string): string {
+export function resolveInVault(vaultDir: string, relPath: string): string {
   const clean = normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, "");
   const abs = join(vaultDir, clean);
   const root = normalize(vaultDir + sep);
