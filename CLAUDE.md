@@ -1,9 +1,11 @@
 # Bridges — notas para agentes
 
 Bridges es un vault de documentación (Obsidian self-hosteado) empaquetado como
-**plugin de Claude Code**: un MCP read-only para buscar/leer/navegar el vault, más
-skill (`bridges-docs`), command (`/bridges`) y agente (`doc-writer`). El identifier
-histórico del repo sigue siendo "forge".
+**plugin de Claude Code**: un MCP para buscar/leer/navegar el vault con tools read-only,
+más skill (`bridges-docs`), command (`/bridges`) y agente (`doc-writer`). En modo local
+con `BRIDGES_MCP_READONLY` deshabilitado expone además `create_note`/`update_note`/
+`delete_note`/`restore_note`/`list_history` con undo net en `.bridges/` (snapshots +
+papelera). El identifier histórico del repo sigue siendo "forge".
 
 ## Mapa del repo
 

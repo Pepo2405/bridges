@@ -35,6 +35,22 @@ Las tools pueden correr de dos formas:
 - **`list_links(path, vault?)`** — lista las notas a las que `path` **enlaza**, marcando los
   links rotos (sin nota destino).
 
+### Escritura (Fase 0, local-only)
+
+Si el MCP arranca en modo local y `BRIDGES_MCP_READONLY` != `1`, registra además:
+
+- **`create_note(title, content, path?, folder?, overwrite?, vault?)`** — crea una nota
+  (sin `path` → `Memoria/<slug(title)>.md`). Colisión sin `overwrite` → error.
+- **`update_note(path, mode, content, heading?, vault?)`** — `overwrite` / `append` /
+  `patch` (sección por `heading`). Snapshotea el estado previo.
+- **`delete_note(path, vault?)`** — a la papelera (`.bridges/trash`), avisa backlinks huérfanos.
+- **`restore_note(path, from?, timestamp?, vault?)`** — recupera de trash o revierte un snapshot.
+- **`list_history(path, vault?)`** — snapshots + papelera de una nota.
+
+Toda op destructiva es recuperable: snapshots en `.bridges/history/` (máx. 50 por nota)
+y borrados en `.bridges/trash/`. Ambos excluidos del índice (dotdir). `BRIDGES_MCP_READONLY=1`
+apaga la escritura; `BRIDGES_MCP_DEFAULT_FOLDER` cambia la carpeta default (fallback `Memoria`).
+
 ### Multi-vault (`vault?`)
 
 Todas las tools de lectura aceptan un `vault` opcional con el **nombre** de un vault
@@ -54,6 +70,8 @@ vault, sin reiniciar ni cambiar el default. El flujo típico del agente: `list_v
 | `BRIDGES_TOKEN` | — | Bearer token del vault (omitir si el server corre sin auth). El vault lo determina el token. |
 | `BRIDGES_VAULT_DIR` | — | raíz del vault en disco. Si está, la búsqueda corre contra un índice FTS **local** (sub-ms, offline) y los hits incluyen la ruta absoluta local para abrirlos con `Read`. Debe ser la carpeta del **mismo** vault que el token. |
 | `BRIDGES_LOCAL_SEARCH` | — | `0` fuerza el camino HTTP aunque haya `BRIDGES_VAULT_DIR` (p. ej. para comparar con el ranking del server). |
+| `BRIDGES_MCP_READONLY` | — | `1` desregistra las write-tools (MCP solo-lectura aunque sea local). |
+| `BRIDGES_MCP_DEFAULT_FOLDER` | `Memoria` | carpeta para notas creadas sin `path`. |
 
 ## Registrar en Claude Code
 
