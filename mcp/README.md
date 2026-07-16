@@ -1,11 +1,11 @@
 # bridges-mcp
 
-Servidor MCP **de solo lectura** que expone el vault del bridges-server a agentes
+Servidor MCP para el vault del bridges-server: tools de lectura (búsqueda, notas, grafo) y —en modo local— escritura de notas con undo (Fase 0). Expone el vault a agentes
 (Claude Code): búsqueda rankeada, lectura de notas y navegación por el grafo de
 wikilinks. En vez de grepear el vault en disco —que a escala devuelve miles de
 hits sin ordenar— el agente busca con `search_vault` (resultados ya **rankeados
 por relevancia (BM25)** con snippets), abre la nota que le sirve y salta por sus
-backlinks/links. No escribe nada: las cuatro tools son read-only.
+backlinks/links. Cuatro tools de lectura; en modo local, con write habilitado (default), suma cinco tools de escritura recuperables (ver §Escritura).
 
 Las tools pueden correr de dos formas:
 
