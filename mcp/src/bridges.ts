@@ -62,7 +62,7 @@ export function resolveVaultDir(cwd: string = process.cwd()): string | null {
 
 /** Dir efectivo para una consulta: el vault nombrado (si se pasó) o el resuelto al
  *  arrancar. Lanza si `vault` no corresponde a ningún vault configurado. */
-function effectiveVaultDir(vault?: string): string | undefined {
+export function effectiveVaultDir(vault?: string): string | undefined {
   if (!vault) return VAULT_DIR;
   const dir = resolveNamedVault(vault);
   if (!dir) throw new Error(`vault desconocido: "${vault}". Usá list_vaults para ver los disponibles.`);
@@ -189,4 +189,9 @@ export async function allDocs(vault?: string): Promise<DocLite[]> {
   if (dir && LOCAL_ENABLED) return allDocsLocal(dir);
   if (vault) throw new Error(`no puedo leer del vault "${vault}" en modo HTTP: el server sirve un solo vault (por token).`);
   return (await fetchSyncDocs()).map((d) => ({ path: d.path, title: d.title, content: d.content }));
+}
+
+/** true si el MCP arrancó contra un vault local (write habilitable). */
+export function isLocalMode(): boolean {
+  return !!VAULT_DIR && LOCAL_ENABLED;
 }

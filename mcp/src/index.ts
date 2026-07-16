@@ -9,6 +9,11 @@
  *   - list_vaults    vaults configurados en la app de Bridges (nombre, ruta, default)
  * Cada tool corre contra el disco local (si resolveVaultDir resuelve un vault) o por HTTP.
  *
+ * Si el vault es local y BRIDGES_MCP_READONLY!=1, además registra 5 write-tools:
+ *   - create_note / update_note / delete_note / restore_note / list_history
+ * La escritura es local-only (nunca HTTP) y toda op destructiva es recuperable
+ * (.bridges/history + .bridges/trash). Ver docs/superpowers/specs/2026-07-06-mcp-write-fase0-design.md
+ *
  * Config por env:
  *   BRIDGES_URL          base del server (default http://localhost:4321)
  *   BRIDGES_TOKEN        Bearer token del vault (opcional si el server corre sin auth)
@@ -25,9 +30,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { searchVault, readNote, allDocs } from "./bridges";
+import { searchVault, readNote, allDocs, effectiveVaultDir, isLocalMode } from "./bridges";
 import { getBacklinks, getOutgoingLinks } from "./graph";
 import { readVaults, formatVaults } from "./config";
+import { createNote, updateNote, deleteNote, restoreNote, listHistory } from "./writer";
 
 const server = new McpServer({ name: "bridges-mcp", version: "0.1.0" });
 
@@ -203,6 +209,144 @@ server.registerTool(
     return { content: [{ type: "text", text: `${vaults.length} vault(s):\n\n${formatVaults(vaults)}` }] };
   },
 );
+
+// ── Write-tools (Fase 0) ──────────────────────────────────────────────────
+// Solo en modo local y con write habilitado (opt-out con BRIDGES_MCP_READONLY=1).
+if (isLocalMode() && process.env.BRIDGES_MCP_READONLY !== "1") {
+  const vaultArg = z
+    .string()
+    .optional()
+    .describe("Nombre del vault destino (ver list_vaults). Por defecto, el vault del repo/default.");
+
+  const json = (obj: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(obj) }] });
+  const fail = (e: unknown) => ({
+    isError: true,
+    content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }],
+  });
+  // dir local del vault destino; lanza si el vault nombrado no existe o no es local.
+  const dirFor = (vault?: string): string => {
+    const d = effectiveVaultDir(vault);
+    if (!d) throw new Error("no hay vault local resuelto para escribir.");
+    return d;
+  };
+  const brokenLinksOf = async (vault: string | undefined, path: string): Promise<string[]> => {
+    const docs = await allDocs(vault);
+    return getOutgoingLinks(docs, path).filter((l) => !l.resolved).map((l) => l.target);
+  };
+
+  server.registerTool(
+    "create_note",
+    {
+      title: "Crear una nota en el vault",
+      description:
+        "Crea una nota nueva. Con `path` la ubica ahí (agrega .md); sin `path`, usa " +
+        "el slug del `title` dentro de `folder` (default 'Memoria'). Si ya existe y no " +
+        "pasás overwrite:true, falla. Devuelve JSON con el path creado y links rotos.",
+      inputSchema: {
+        title: z.string().min(1).describe("Título de la nota (se usa para el slug si no hay path)."),
+        content: z.string().describe("Contenido markdown del cuerpo."),
+        path: z.string().optional().describe("Ruta relativa destino (sin .md o con .md)."),
+        folder: z.string().optional().describe("Carpeta destino si no hay path (default 'Memoria')."),
+        overwrite: z.boolean().optional().describe("Si true, reemplaza una nota existente en ese path."),
+        vault: vaultArg,
+      },
+    },
+    async ({ title, content, path, folder, overwrite, vault }) => {
+      try {
+        const r = createNote(dirFor(vault), { title, content, path, folder, overwrite });
+        return json({ ...r, brokenLinks: await brokenLinksOf(vault, r.path) });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "update_note",
+    {
+      title: "Editar una nota del vault",
+      description:
+        "Edita una nota existente. mode='overwrite' reemplaza todo el cuerpo; 'append' " +
+        "agrega al final (journal); 'patch' reemplaza el cuerpo bajo `heading` (## X) " +
+        "hasta el próximo heading de nivel igual o mayor (heading inexistente falla). " +
+        "Snapshotea el estado previo. Devuelve JSON con links rotos.",
+      inputSchema: {
+        path: z.string().min(1).describe("Ruta relativa de la nota (con .md)."),
+        mode: z.enum(["overwrite", "append", "patch"]).describe("Modo de edición."),
+        content: z.string().describe("Contenido a escribir (cuerpo entero / a agregar / de la sección)."),
+        heading: z.string().optional().describe("Requerido en mode='patch': heading de la sección (texto sin #)."),
+        vault: vaultArg,
+      },
+    },
+    async ({ path, mode, content, heading, vault }) => {
+      try {
+        const r = updateNote(dirFor(vault), { path, mode, content, heading });
+        return json({ ...r, brokenLinks: await brokenLinksOf(vault, r.path) });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "delete_note",
+    {
+      title: "Borrar una nota del vault (a la papelera)",
+      description:
+        "Mueve la nota a .bridges/trash (recuperable con restore_note). Devuelve JSON " +
+        "con el trashPath y qué notas quedaron con backlinks huérfanos hacia ella.",
+      inputSchema: {
+        path: z.string().min(1).describe("Ruta relativa de la nota a borrar (con .md)."),
+        vault: vaultArg,
+      },
+    },
+    async ({ path, vault }) => {
+      try {
+        const docs = await allDocs(vault);
+        const orphanedBacklinks = getBacklinks(docs, path).map((d) => d.path);
+        const r = deleteNote(dirFor(vault), path);
+        return json({ ...r, orphanedBacklinks });
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "restore_note",
+    {
+      title: "Restaurar una nota borrada o revertir una edición",
+      description:
+        "Recupera una nota de la papelera (from='trash') o revierte a un snapshot " +
+        "(from='history'). Sin `from`: usa trash si existe, si no el snapshot más reciente. " +
+        "`timestamp` opcional elige una versión puntual (ver list_history).",
+      inputSchema: {
+        path: z.string().min(1).describe("Ruta relativa de la nota (con .md)."),
+        from: z.enum(["trash", "history"]).optional().describe("Fuente de la restauración."),
+        timestamp: z.string().optional().describe("Timestamp puntual (de list_history)."),
+        vault: vaultArg,
+      },
+    },
+    async ({ path, from, timestamp, vault }) => {
+      try {
+        return json(restoreNote(dirFor(vault), { path, from, timestamp }));
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "list_history",
+    {
+      title: "Historial de una nota (snapshots + papelera)",
+      description:
+        "Lista los snapshots (ediciones previas) y entradas de papelera de una nota, " +
+        "con su timestamp, para elegir qué restaurar con restore_note.",
+      inputSchema: {
+        path: z.string().min(1).describe("Ruta relativa de la nota (con .md)."),
+        vault: vaultArg,
+      },
+    },
+    async ({ path, vault }) => {
+      try {
+        return json({ path, entries: listHistory(dirFor(vault), path) });
+      } catch (e) { return fail(e); }
+    },
+  );
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
