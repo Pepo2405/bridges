@@ -84,6 +84,30 @@ export function createNote(
   return { path: rel, title: deriveTitle(args.content, rel), action: "created", bytes };
 }
 
+/**
+ * Reemplaza el cuerpo bajo `heading` (texto sin `#`) por `newBody`, hasta el próximo
+ * heading de nivel igual o mayor (mismo nº de `#` o menos). Heading inexistente → throw.
+ */
+export function patchSection(content: string, heading: string, newBody: string): string {
+  const lines = content.split("\n");
+  const target = heading.replace(/^#+\s*/, "").trim();
+  const hIdx = lines.findIndex(
+    (l) => /^#{1,6}\s+/.test(l) && l.replace(/^#{1,6}\s+/, "").trim() === target,
+  );
+  if (hIdx === -1) throw new Error(`heading no encontrado: "${heading}"`);
+  const level = lines[hIdx].match(/^#+/)![0].length;
+  let end = lines.length;
+  for (let i = hIdx + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(#{1,6})\s+/);
+    if (m && m[1].length <= level) { end = i; break; }
+  }
+  const before = lines.slice(0, hIdx + 1);
+  const after = lines.slice(end);
+  const body = newBody.replace(/\n+$/, "");
+  const joined = [...before, "", body, "", ...after].join("\n");
+  return joined.replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "") + "\n";
+}
+
 export function updateNote(
   vaultDir: string,
   args: { path: string; mode: "overwrite" | "append" | "patch"; content: string; heading?: string },
@@ -99,7 +123,9 @@ export function updateNote(
     const prev = readFileSync(abs, "utf8");
     next = prev.endsWith("\n") ? prev + args.content : `${prev}\n${args.content}`;
   } else {
-    throw new Error(`modo patch: implementado en patchSection (ver updateNote patch).`);
+    const prev = readFileSync(abs, "utf8");
+    if (!args.heading) throw new Error(`modo patch requiere "heading".`);
+    next = patchSection(prev, args.heading, args.content);
   }
   const bytes = writeFileEnsured(abs, next);
   return { path: rel, title: deriveTitle(next, rel), action: "updated", mode: args.mode, bytes };

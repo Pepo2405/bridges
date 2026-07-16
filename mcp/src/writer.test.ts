@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { slug, snapshot, historyDir, createNote, updateNote } from "./writer";
+import { slug, snapshot, historyDir, createNote, updateNote, patchSection } from "./writer";
 
 describe("slug", () => {
   test("normaliza título a nombre de archivo", () => {
@@ -123,5 +123,61 @@ describe("updateNote overwrite/append", () => {
 
   test("nota inexistente lanza", () => {
     expect(() => updateNote(dir, { path: "no.md", mode: "overwrite", content: "x" })).toThrow(/no existe/i);
+  });
+});
+
+describe("patchSection", () => {
+  const doc = `# Título
+
+## Sección A
+texto A
+
+## Sección B
+viejo B
+más viejo
+
+## Sección C
+texto C
+`;
+
+  test("reemplaza solo el cuerpo de la sección indicada", () => {
+    const out = patchSection(doc, "Sección B", "nuevo B");
+    expect(out).toContain("## Sección B\n\nnuevo B");
+    expect(out).toContain("## Sección A\ntexto A"); // A intacta
+    expect(out).toContain("## Sección C\ntexto C"); // C intacta
+    expect(out).not.toContain("viejo B");
+  });
+
+  test("una sección incluye a sus subsecciones más profundas", () => {
+    const nested = `## Padre\ncuerpo\n### Hija\nsub\n## Otro\nx\n`;
+    const out = patchSection(nested, "Padre", "NUEVO");
+    expect(out).toContain("## Padre\n\nNUEVO");
+    expect(out).not.toContain("### Hija"); // la hija (###) cae dentro de Padre (##) → se reemplaza
+    expect(out).toContain("## Otro\nx");   // Otro (##, mismo nivel) corta la sección
+  });
+
+  test("heading inexistente lanza", () => {
+    expect(() => patchSection(doc, "No Existe", "x")).toThrow(/heading/i);
+  });
+});
+
+describe("updateNote patch", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bridges-w-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  test("patch reemplaza la sección en disco", () => {
+    createNote(dir, { title: "T", content: "# T\n\n## X\nviejo\n\n## Y\nkeep\n", path: "n" });
+    const r = updateNote(dir, { path: "n.md", mode: "patch", content: "nuevo", heading: "X" });
+    expect(r.mode).toBe("patch");
+    const out = readFileSync(join(dir, "n.md"), "utf8");
+    expect(out).toContain("## X\n\nnuevo");
+    expect(out).toContain("## Y\nkeep");
+    expect(out).not.toContain("viejo");
+  });
+
+  test("heading inexistente no crea nada y lanza", () => {
+    createNote(dir, { title: "T", content: "# T\n\n## X\na\n", path: "n" });
+    expect(() => updateNote(dir, { path: "n.md", mode: "patch", content: "z", heading: "NoExiste" })).toThrow(/heading/i);
   });
 });
