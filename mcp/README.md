@@ -22,18 +22,29 @@ Las tools pueden correr de dos formas:
 
 ## Tools
 
-- **`search_vault(query, limit?, pathPrefix?)`** — busca `query` (texto libre) y
+- **`search_vault(query, limit?, pathPrefix?, vault?)`** — busca `query` (texto libre) y
   devuelve hasta `limit` resultados (default 10), cada uno con `path`, `title` y un
   `snippet` (30 tokens) y —en modo local— la ruta **absoluta local** del `.md`.
   `pathPrefix` filtra a notas cuyo path empieza con ese prefijo (p. ej.
   `'01 - Proyectos/'`). Ya viene ordenado por relevancia: usalo en vez de grepear.
-- **`read_note(path)`** — devuelve el **contenido completo** de una nota por su path
+- **`read_note(path, vault?)`** — devuelve el **contenido completo** de una nota por su path
   relativo. En modo local lo lee del disco (con guard anti-traversal); en modo HTTP
   lo trae de `/sync`. Cierra el agujero de que en HTTP el agente solo veía el snippet.
-- **`get_backlinks(path)`** — lista las notas que **enlazan** a `path` (vía
+- **`get_backlinks(path, vault?)`** — lista las notas que **enlazan** a `path` (vía
   `[[wikilinks]]`). El diferencial sobre grep: navegás el grafo, no el texto.
-- **`list_links(path)`** — lista las notas a las que `path` **enlaza**, marcando los
+- **`list_links(path, vault?)`** — lista las notas a las que `path` **enlaza**, marcando los
   links rotos (sin nota destino).
+
+### Multi-vault (`vault?`)
+
+Todas las tools de lectura aceptan un `vault` opcional con el **nombre** de un vault
+configurado en la app (ver `list_vaults`). Sin `vault`, opera sobre el vault que
+resuelve la cascada de arranque (`.bridges → BRIDGES_VAULT_DIR → lastVault`). Con
+`vault`, resuelve `name`/basename → path contra `bridges.json` y busca/lee en **ese**
+vault, sin reiniciar ni cambiar el default. El flujo típico del agente: `list_vaults`
+→ elegir por nombre → `search_vault(query, vault: "…")`. Vault desconocido → error
+(`list_vaults` para ver los disponibles). El `vault` nombrado solo funciona en modo
+**local**: por HTTP el server sirve un único vault (el que fija el token).
 
 ## Config (env)
 
