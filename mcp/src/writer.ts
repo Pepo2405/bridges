@@ -4,9 +4,9 @@
  * Local-only: nunca habla HTTP. Ver docs/superpowers/specs/2026-07-06-mcp-write-fase0-design.md
  */
 import {
-  readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, renameSync, statSync, existsSync, appendFileSync,
+  readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, renameSync, existsSync, appendFileSync,
 } from "node:fs";
-import { join, dirname, basename, relative } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { deriveTitle } from "../../server/src/search-common";
 import { resolveInVault } from "./bridges";
 
@@ -133,17 +133,21 @@ export function updateNote(
   const rel = args.path;
   const abs = resolveInVault(vaultDir, rel);
   if (!existsSync(abs)) throw new Error(`no existe la nota "${rel}".`);
-  snapshot(vaultDir, rel);
   let next: string;
   if (args.mode === "overwrite") {
+    snapshot(vaultDir, rel);
     next = args.content;
   } else if (args.mode === "append") {
+    snapshot(vaultDir, rel);
     const prev = readFileSync(abs, "utf8");
     next = prev.endsWith("\n") ? prev + args.content : `${prev}\n${args.content}`;
   } else {
+    // patch: computar el resultado ANTES de snapshotear, así un heading inválido
+    // (o ausente) no deposita un snapshot inútil (erosiona la rotación de 50).
     const prev = readFileSync(abs, "utf8");
     if (!args.heading) throw new Error(`modo patch requiere "heading".`);
     next = patchSection(prev, args.heading, args.content);
+    snapshot(vaultDir, rel);
   }
   const bytes = writeFileEnsured(abs, next);
   return { path: rel, title: deriveTitle(next, rel), action: "updated", mode: args.mode, bytes };

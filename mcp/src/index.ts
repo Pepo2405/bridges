@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Servidor MCP de SOLO LECTURA para Bridges: expone el vault del bridges-server a
- * un agente (Claude Code) con cinco tools, así no tiene que grepear el disco:
+ * Servidor MCP para Bridges: expone el vault del bridges-server a un agente
+ * (Claude Code) con cinco tools de lectura, así no tiene que grepear el disco:
  *   - search_vault   búsqueda full-text rankeada (FTS5/BM25) con snippets
  *   - read_note      contenido completo de una nota por su path
  *   - get_backlinks  notas que enlazan a una (grafo de [[wikilinks]])
