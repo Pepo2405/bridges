@@ -2,7 +2,9 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { slug, snapshot, historyDir, createNote, updateNote, patchSection, deleteNote } from "./writer";
+import {
+  slug, snapshot, historyDir, createNote, updateNote, patchSection, deleteNote, restoreNote, listHistory,
+} from "./writer";
 
 describe("slug", () => {
   test("normaliza título a nombre de archivo", () => {
@@ -235,5 +237,47 @@ describe("deleteNote", () => {
     expect(r1.trashPath).not.toBe(r2.trashPath);
     expect(readFileSync(join(dir, r1.trashPath), "utf8")).toBe("v1");
     expect(readFileSync(join(dir, r2.trashPath), "utf8")).toBe("v2");
+  });
+});
+
+describe("restoreNote / listHistory", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bridges-w-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  test("restaura un borrado desde trash", () => {
+    createNote(dir, { title: "T", content: "data", path: "n" });
+    deleteNote(dir, "n.md", 1000);
+    const r = restoreNote(dir, { path: "n.md" });
+    expect(r).toMatchObject({ action: "restored", source: "trash" });
+    expect(readFileSync(join(dir, "n.md"), "utf8")).toBe("data");
+  });
+
+  test("revierte una edición desde history (from:history)", () => {
+    createNote(dir, { title: "T", content: "v1", path: "n" });
+    updateNote(dir, { path: "n.md", mode: "overwrite", content: "v2" }); // snapshotea v1
+    const r = restoreNote(dir, { path: "n.md", from: "history" });
+    expect(r.source).toBe("history");
+    expect(readFileSync(join(dir, "n.md"), "utf8")).toBe("v1");
+  });
+
+  test("listHistory lista snapshots y trash de la nota", () => {
+    createNote(dir, { title: "T", content: "v1", path: "n" });
+    updateNote(dir, { path: "n.md", mode: "overwrite", content: "v2" });
+    deleteNote(dir, "n.md", 2000);
+    const h = listHistory(dir, "n.md");
+    expect(h.some((e) => e.kind === "history")).toBe(true);
+    expect(h.some((e) => e.kind === "trash")).toBe(true);
+  });
+
+  test("restaurar sin trash ni history lanza", () => {
+    expect(() => restoreNote(dir, { path: "no.md" })).toThrow(/nada que restaurar/i);
+  });
+
+  test("restaurar desde trash no pisa un archivo existente", () => {
+    createNote(dir, { title: "T", content: "data", path: "n" });
+    deleteNote(dir, "n.md", 1000);
+    createNote(dir, { title: "T2", content: "nuevo", path: "n" }); // se recreó tras el delete
+    expect(() => restoreNote(dir, { path: "n.md" })).toThrow(/ya existe|pisar/i);
   });
 });

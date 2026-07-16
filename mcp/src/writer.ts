@@ -168,3 +168,69 @@ export function deleteNote(vaultDir: string, relPath: string, now: number = Date
   appendFileSync(manifestAbs, JSON.stringify({ path: relPath, trashPath: trashRel, ts }) + "\n", "utf8");
   return { path: relPath, action: "trashed", trashPath: trashRel };
 }
+
+/** Resultado de una restauración (desde trash o history). */
+export type RestoreResult = { path: string; action: "restored"; source: "trash" | "history" };
+/** Entrada de historial: un snapshot en `.bridges/history/` o un borrado en `.bridges/trash/`. */
+export type HistoryEntry = { kind: "history" | "trash"; ts: string; ref: string };
+
+type TrashRec = { path: string; trashPath: string; ts: string };
+
+/** Lee el manifest de trash (una entrada JSON por línea). [] si no existe aún. */
+function readManifest(vaultDir: string): TrashRec[] {
+  const p = join(vaultDir, VAULT_INTERNAL, "trash", "manifest.jsonl");
+  if (!existsSync(p)) return [];
+  return readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as TrashRec);
+}
+
+/** Snapshots de history + entradas de trash de una nota, ordenados por ts. */
+export function listHistory(vaultDir: string, relPath: string): HistoryEntry[] {
+  const out: HistoryEntry[] = [];
+  const hdir = historyDir(vaultDir, relPath);
+  if (existsSync(hdir)) {
+    // ref sanitizado: relative(vaultDir, hdir), NO el relPath crudo (historyDir ya
+    // pasó por resolveInVault) — mismo enfoque anti-traversal que el resto del módulo.
+    const relHistoryDir = relative(vaultDir, hdir);
+    for (const f of readdirSync(hdir).sort()) {
+      out.push({ kind: "history", ts: f.replace(/\.md$/, ""), ref: join(relHistoryDir, f) });
+    }
+  }
+  for (const rec of readManifest(vaultDir).filter((r) => r.path === relPath)) {
+    out.push({ kind: "trash", ts: rec.ts, ref: rec.trashPath });
+  }
+  return out.sort((a, b) => a.ts.localeCompare(b.ts));
+}
+
+/**
+ * Restaura una nota borrada (desde trash) o revierte una edición (desde history).
+ * Default: trash si hay una entrada para `path`, si no el snapshot de history más
+ * reciente. No pisa un archivo existente, salvo que sea un revert desde history
+ * (ahí se snapshotea el estado actual antes de sobreescribir). Nada que restaurar → throw.
+ */
+export function restoreNote(
+  vaultDir: string,
+  args: { path: string; from?: "trash" | "history"; timestamp?: string },
+): RestoreResult {
+  const rel = args.path;
+  const abs = resolveInVault(vaultDir, rel); // destino: siempre vía resolveInVault
+  const trash = readManifest(vaultDir).filter((r) => r.path === rel);
+  const wantTrash = args.from === "trash" || (!args.from && trash.length > 0);
+  if (wantTrash) {
+    const rec = args.timestamp ? trash.find((r) => r.ts === args.timestamp) : trash[trash.length - 1];
+    if (!rec) throw new Error(`nada que restaurar en trash para "${rel}".`);
+    if (existsSync(abs)) {
+      throw new Error(`ya existe una nota en "${rel}"; no se puede restaurar desde trash sin pisarla.`);
+    }
+    const src = resolveInVault(vaultDir, rec.trashPath); // fuente también vía resolveInVault
+    writeFileEnsured(abs, readFileSync(src, "utf8"));
+    return { path: rel, action: "restored", source: "trash" };
+  }
+  const hdir = historyDir(vaultDir, rel);
+  const snaps = existsSync(hdir) ? readdirSync(hdir).sort() : [];
+  if (!snaps.length) throw new Error(`nada que restaurar (sin trash ni history) para "${rel}".`);
+  const snap = args.timestamp ? snaps.find((f) => f.startsWith(args.timestamp!)) : snaps[snaps.length - 1];
+  if (!snap) throw new Error(`no hay snapshot "${args.timestamp}" para "${rel}".`);
+  snapshot(vaultDir, rel); // guarda el estado actual antes de revertir
+  writeFileEnsured(abs, readFileSync(join(hdir, snap), "utf8"));
+  return { path: rel, action: "restored", source: "history" };
+}
