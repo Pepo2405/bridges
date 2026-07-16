@@ -153,7 +153,13 @@ export function deleteNote(vaultDir: string, relPath: string, now: number = Date
   const abs = resolveInVault(vaultDir, relPath);
   if (!existsSync(abs)) throw new Error(`no existe la nota "${relPath}".`);
   const ts = stamp(now);
-  const trashRel = join(VAULT_INTERNAL, "trash", ts, relPath);
+  const safeRel = relative(vaultDir, abs); // sanitizado: mismo enfoque anti-traversal que historyDir
+  // desambigua colisiones (mismo path + mismo ts) con un contador en el dir <ts>
+  let trashRel = join(VAULT_INTERNAL, "trash", ts, safeRel);
+  let n = 1;
+  while (existsSync(resolveInVault(vaultDir, trashRel))) {
+    trashRel = join(VAULT_INTERNAL, "trash", `${ts}-${n++}`, safeRel);
+  }
   const trashAbs = resolveInVault(vaultDir, trashRel);
   mkdirSync(dirname(trashAbs), { recursive: true });
   renameSync(abs, trashAbs);

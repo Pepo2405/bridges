@@ -214,4 +214,26 @@ describe("deleteNote", () => {
   test("nota inexistente lanza", () => {
     expect(() => deleteNote(dir, "no.md")).toThrow(/no existe/i);
   });
+
+  test("un relPath con ../ no clobberea el manifest de trash", () => {
+    writeFileSync(join(dir, "a.md"), "AAA", "utf8");
+    deleteNote(dir, "a.md", 1000); // delete legítimo → crea manifest
+    const manifest = join(dir, ".bridges", "trash", "manifest.jsonl");
+    const before = readFileSync(manifest, "utf8").trim();
+    writeFileSync(join(dir, "manifest.jsonl"), "evil", "utf8");
+    deleteNote(dir, "../manifest.jsonl", 2000); // intento de clobber
+    const after = readFileSync(manifest, "utf8");
+    expect(after).toContain(before);        // la entrada original sobrevive
+    expect(after.trim().split("\n").length).toBe(2); // 2 entradas, no 1 corrupta
+  });
+
+  test("dos deletes del mismo path en el mismo ts no se pisan", () => {
+    writeFileSync(join(dir, "n.md"), "v1", "utf8");
+    const r1 = deleteNote(dir, "n.md", 3000);
+    writeFileSync(join(dir, "n.md"), "v2", "utf8");
+    const r2 = deleteNote(dir, "n.md", 3000);
+    expect(r1.trashPath).not.toBe(r2.trashPath);
+    expect(readFileSync(join(dir, r1.trashPath), "utf8")).toBe("v1");
+    expect(readFileSync(join(dir, r2.trashPath), "utf8")).toBe("v2");
+  });
 });
