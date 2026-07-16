@@ -23,3 +23,29 @@ export function slug(title: string): string {
     .replace(/^-+|-+$/g, "");        // recorta guiones de los bordes
   return s || "nota";
 }
+
+/** Dir de historial de una nota: .bridges/history/<relPath>/ */
+export function historyDir(vaultDir: string, relPath: string): string {
+  return join(vaultDir, VAULT_INTERNAL, "history", relPath);
+}
+
+/** Timestamp filesystem-safe (sin `:` ni `.`). */
+function stamp(now: number): string {
+  return new Date(now).toISOString().replace(/[:.]/g, "-");
+}
+
+/**
+ * Guarda el estado ACTUAL del `.md` en el historial antes de una edición/borrado.
+ * No hace nada si el archivo no existe (create sin versión previa). Rota a 50.
+ */
+export function snapshot(vaultDir: string, relPath: string, now: number = Date.now()): void {
+  const abs = resolveInVault(vaultDir, relPath);
+  if (!existsSync(abs)) return;
+  const hdir = historyDir(vaultDir, relPath);
+  mkdirSync(hdir, { recursive: true });
+  writeFileSync(join(hdir, `${stamp(now)}.md`), readFileSync(abs, "utf8"), "utf8");
+  const files = readdirSync(hdir).sort(); // ISO ordena cronológicamente
+  for (const f of files.slice(0, Math.max(0, files.length - 50))) {
+    rmSync(join(hdir, f), { force: true });
+  }
+}
