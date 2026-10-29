@@ -4,7 +4,7 @@
 # y lo ejecuta hablando stdio. El consumidor no necesita Bun.
 set -eu
 
-VERSION="0.1.2"                 # mantener sincronizado con plugin.json / tag mcp-v<VERSION>
+VERSION="0.2.0"                 # mantener sincronizado con plugin.json / tag mcp-v<VERSION>
 REPO="Pepo2405/bridges"
 TAG="mcp-v${VERSION}"
 
@@ -39,4 +39,5 @@ if [ ! -x "$bin" ]; then
   chmod +x "$bin"
 fi
 
-exec "$bin"
+# Sin args: servidor MCP por stdio. `hook session-start`: modo hook (ver mcp/src/hook.ts).
+exec "$bin" "$@"

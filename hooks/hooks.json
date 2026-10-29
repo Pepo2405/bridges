@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/launch.sh\" hook session-start",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
