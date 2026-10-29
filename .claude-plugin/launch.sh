@@ -4,7 +4,7 @@
 # y lo ejecuta hablando stdio. El consumidor no necesita Bun.
 set -eu
 
-VERSION="0.2.0"                 # mantener sincronizado con plugin.json / tag mcp-v<VERSION>
+VERSION="0.2.1"                 # mantener sincronizado con plugin.json / tag mcp-v<VERSION>
 REPO="Pepo2405/bridges"
 TAG="mcp-v${VERSION}"
 

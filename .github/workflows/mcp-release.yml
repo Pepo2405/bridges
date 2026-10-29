@@ -10,7 +10,9 @@ jobs:
       matrix:
         include:
           - { runner: macos-14, target: bun-darwin-arm64, out: bridges-mcp-darwin-arm64 }
-          - { runner: macos-13, target: bun-darwin-x64,   out: bridges-mcp-darwin-x64 }
+          # macos-13 (Intel) ya no existe en GitHub: el job quedaba encolado para siempre.
+          # Bun cross-compila darwin-x64 desde macos-14 (ARM).
+          - { runner: macos-14, target: bun-darwin-x64,   out: bridges-mcp-darwin-x64 }
           - { runner: ubuntu-latest, target: bun-linux-x64, out: bridges-mcp-linux-x64 }
     runs-on: ${{ matrix.runner }}
     steps:
