@@ -146,6 +146,7 @@ describe("setup hermes", () => {
       ["gym-admin", { vault: "Gym-Admin", folder: "" }],
       ["pxsol/pxsol-blanco", { vault: "Px", folder: "01 - Proyectos/pxsol-blanco" }],
       ["goblin", { vault: "Goblin", folder: "" }],
+      ["forge", { vault: "Bridges", folder: "" }],
     ] as const) {
       mkdirSync(join(home, "code", repo, "src"), { recursive: true });
       writeFileSync(join(home, "code", repo, ".bridges"), JSON.stringify(marker));
@@ -162,7 +163,7 @@ describe("setup hermes", () => {
     const out = r.stderr.toString() + r.stdout.toString();
     if (r.exitCode !== 0) console.error(out);
     expect(r.exitCode).toBe(0);
-    expect(out).toMatch(/Ran 10 tests/);
+    expect(out).toMatch(/Ran 12 tests/);
   });
 });
 

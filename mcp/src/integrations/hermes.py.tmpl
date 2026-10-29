@@ -106,12 +106,12 @@ def _repo_index() -> List[Any]:
             marker = _read_marker(root)
             if not marker:
                 continue
+            # Nombre del repo + carpeta del proyecto en el vault. El nombre del vault NO: "Bridges"
+            # (vault del repo forge) aparece cada vez que se habla de la memoria y metía ruido.
             folder = str(marker.get("folder", "")).strip("/")
             names = {root.name}
             if folder:
                 names.add(folder.split("/")[-1])
-            else:
-                names.add(str(marker["vault"]))
             for name in names:
                 parts = [p for p in re.split(r"[-_\s]+", _norm(name)) if p]
                 if not parts or len("".join(parts)) < 4:
@@ -245,8 +245,22 @@ def _on_transform_tool_result(tool_name: str = "", args: Any = None, result: Any
         roots = [r for r in _roots_in_args(args) if _project_key(r) not in sess["injected"]]
         if not roots:
             return None
+        # Muchos resultados son JSON y hay consumidores que los parsean (execute_code): en un
+        # objeto JSON el contexto va como una clave más; texto pegado al final lo rompería.
+        parsed: Any = None
+        try:
+            parsed = json.loads(result)
+        except ValueError:
+            pass
+        if parsed is not None and not isinstance(parsed, dict):
+            return None  # JSON que no es objeto (lista, número): no hay dónde ponerlo sin romperlo
         ctx = _inject(sess, roots, "startup")
-        return f"{result}\n\n[Bridges · memoria del proyecto]\n{ctx}" if ctx else None
+        if not ctx:
+            return None
+        if isinstance(parsed, dict):
+            parsed["bridges_memoria"] = ctx
+            return json.dumps(parsed, ensure_ascii=False)
+        return f"{result}\n\n[Bridges · memoria del proyecto]\n{ctx}"
     except Exception:
         return None
 

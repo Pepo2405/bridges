@@ -4,6 +4,7 @@ Env: PLUGIN_FILE (el __init__.py generado, con CMD apuntando a un hook falso que
 `CTX:<source>:<basename del cwd>`), HOME (home temporal con code/<repos>).
 """
 import importlib.util
+import json
 import os
 import sys
 import unittest
@@ -47,6 +48,17 @@ class T(unittest.TestCase):
         self.assertIsNone(pre("s5", "y en gym-admin qué más?"))  # ya inyectado en esta sesión
         self.assertIsNone(pre("s5b", "hola, qué tal"))
         self.assertIn("CTX:startup:pxsol-blanco", pre("s6", "mirá ~/code/pxsol/pxsol-blanco/README.md")["context"])
+
+    def test_nombre_del_vault_no_dispara(self):
+        self.assertIsNone(pre("s11", "guardalo en Bridges, la memoria del proyecto"))
+        self.assertEqual(pre("s12", "sigamos con forge"), {"context": "CTX:startup:forge"})
+
+    def test_resultado_json_sigue_siendo_json(self):
+        r = transform("s13", "patch", {"path": str(HOME / "code/goblin/a")}, result='{"success": true, "diff": "x"}')
+        self.assertEqual(json.loads(r), {"success": True, "diff": "x", "bridges_memoria": "CTX:startup:goblin"})
+        # JSON que no es objeto: no se toca y el proyecto queda pendiente para la próxima tool
+        self.assertIsNone(transform("s14", "search_files", {"path": str(HOME / "code/goblin")}, result="[1, 2]"))
+        self.assertIn("CTX:startup:goblin", transform("s14", "read_file", {"path": str(HOME / "code/goblin/a")}))
 
     def test_compactacion_reinyecta_con_pedido_de_bitacora_una_sola_vez(self):
         transform("s7", "read_file", {"path": str(HOME / "code/gym-admin/a")})
