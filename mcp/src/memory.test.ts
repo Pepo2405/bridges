@@ -35,7 +35,8 @@ describe("resolveProject", () => {
   test("encuentra el .bridges subiendo desde un subdirectorio del repo", () => {
     writeFileSync(join(repo, ".bridges"), JSON.stringify({ vault: "Equipo", folder: "/Proyectos/app/" }));
     const p = resolveProject({ cwd: join(repo, "src", "deep") });
-    expect(p).toMatchObject({ vault: "Equipo", dir: vaultDir, folder: "Proyectos/app" });
+    expect(p).toMatchObject({ vault: "Equipo", dir: vaultDir, folder: "Proyectos/app", root: repo });
+    expect(projectContext(p, { now: NOW })).toContain(`Repo: \`${repo}\``);
   });
 
   test("vault explícito gana y no necesita .bridges", () => {

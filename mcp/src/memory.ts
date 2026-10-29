@@ -19,6 +19,8 @@ export type Project = {
   dir: string;
   /** Carpeta del proyecto dentro del vault, sin barras en los bordes ("" = raíz). */
   folder: string;
+  /** Raíz del repo (donde está el .bridges), si se resolvió por cwd. */
+  root?: string;
 };
 
 export const TIPOS = ["decision", "bugfix", "patron", "config", "preferencia", "descubrimiento"] as const;
@@ -53,7 +55,7 @@ export function resolveProject(opts: { cwd?: string; vault?: string; folder?: st
       if (!marker?.vault) throw new Error(`el .bridges de ${d} no declara "vault".`);
       const dir = resolveNamedVault(marker.vault);
       if (!dir) throw new Error(`el .bridges de ${d} nombra un vault desconocido: "${marker.vault}".`);
-      return { vault: marker.vault, dir, folder: cleanFolder(opts.folder ?? marker.folder) };
+      return { vault: marker.vault, dir, folder: cleanFolder(opts.folder ?? marker.folder), root: d };
     }
     if (dirname(d) === d) break;
   }
@@ -370,6 +372,9 @@ export function projectContext(
       "trampa del código, cambio de config, lo que el usuario confirma o rechaza) y cerrá la sesión con " +
       "`log_session`. Avisá en una línea qué guardaste.",
   );
+  if (p.root) {
+    lines.push(`Repo: \`${p.root}\` (pasalo como \`cwd\` a esas tools si tu MCP no corre dentro del repo).`);
+  }
 
   const decs: string[] = [];
   for (const n of listNotes(p, DECISIONES)) {

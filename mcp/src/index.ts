@@ -18,6 +18,8 @@
  *
  * Modo hook: `bridges-mcp hook session-start` (stdin JSON de Claude Code) imprime el
  * contexto del proyecto y sale, sin levantar el servidor MCP. Ver hook.ts.
+ * Modo setup: `bridges-mcp setup <opencode|omp>` conecta otro agente (MCP + plugin de
+ * contexto/compactación). Ver setup.ts.
  * La escritura es local-only (nunca HTTP) y toda op destructiva es recuperable
  * (.bridges/history + .bridges/trash). Ver docs/superpowers/specs/2026-07-06-mcp-write-fase0-design.md
  *
@@ -43,6 +45,11 @@ import { readVaults, formatVaults } from "./config";
 import { createNote, updateNote, deleteNote, restoreNote, listHistory } from "./writer";
 import { resolveProject, projectContext, saveDecision, logSession, TIPOS } from "./memory";
 import { runHook } from "./hook";
+import { runSetupCli } from "./setup";
+
+if (process.argv[2] === "setup") {
+  process.exit(runSetupCli(process.argv.slice(3)));
+}
 
 if (process.argv[2] === "hook") {
   process.stdout.write(runHook(process.argv[3], await Bun.stdin.text()));

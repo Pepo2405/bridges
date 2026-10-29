@@ -62,6 +62,17 @@ stdin e imprime el contexto como `additionalContext` (con `source: "compact"`, a
 escribir la Bitácora). El plugin lo registra en `hooks/hooks.json`. Sin `.bridges` no
 imprime nada.
 
+**Otros agentes:** `bridges-mcp setup <opencode|omp> [--command '<cmd>'] [--dry-run]`
+(desde la fuente: `bun run mcp/src/index.ts setup opencode`). Agrega o actualiza la
+entrada `bridges` del MCP en la config del agente (conserva las otras y el `environment`;
+backup `*.bak-bridges-*`) e instala un plugin que hace lo mismo que el hook de Claude Code:
+contexto del proyecto en el system prompt (una vez por sesión, sin romper el prompt cache)
+y, al compactar, pedido de Bitácora hasta que el agente llama a `log_session`. Saltea
+subagentes. Archivos: OpenCode → `~/.config/opencode/plugins/bridges-memoria.js`, omp →
+`~/.omp/agent/extensions/bridges-memoria.ts` (plantillas en `src/integrations/`). El
+comando default es el que está corriendo; si es el binario del plugin de Claude (ruta con
+versión), pasá `--command` con algo estable.
+
 ### Escritura (Fase 0, local-only)
 
 Si el MCP arranca en modo local y `BRIDGES_MCP_READONLY` != `1`, registra además:

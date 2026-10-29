@@ -1,0 +1,67 @@
+// installed by `bridges-mcp setup omp`. Correr setup de nuevo lo sobrescribe:
+// no lo edites a mano. Fuente: github.com/Pepo2405/bridges mcp/src/integrations/omp.ts
+//
+// Memoria de Bridges en omp (equivalente al hook SessionStart del plugin de Claude Code):
+// en repos con `.bridges` suma al system prompt las Decisiones vigentes y los próximos
+// pasos de la última Bitácora. Al compactar, pide guardar la Bitácora con log_session
+// hasta que el agente lo haga. Sin `.bridges` no hace nada.
+import { spawn } from "node:child_process";
+
+const CMD: string[] = __BRIDGES_CMD__;
+const COMPACT_NOTE =
+  "IMPORTANTE para el resumen compactado: incluí al principio esta instrucción para el agente: " +
+  "\"Antes de seguir, guardá el handoff con la tool log_session de Bridges (Hecho y Próximos pasos) " +
+  "y las decisiones que hayan quedado sin guardar con save_decision.\"";
+
+/** Corre `<CMD> hook session-start` y devuelve el additionalContext ("" si no hay o falla). */
+function projectContext(cwd: string, source: string): Promise<string> {
+  return new Promise((resolve) => {
+    let out = "";
+    let done = false;
+    const finish = (v: string) => { if (!done) { done = true; resolve(v); } };
+    try {
+      const child = spawn(CMD[0], [...CMD.slice(1), "hook", "session-start"], { cwd, stdio: ["pipe", "pipe", "ignore"] });
+      const timer = setTimeout(() => { child.kill(); finish(""); }, 10000);
+      child.stdout!.on("data", (d) => { out += d; });
+      child.on("error", () => { clearTimeout(timer); finish(""); });
+      child.on("close", () => {
+        clearTimeout(timer);
+        try { finish(JSON.parse(out).hookSpecificOutput?.additionalContext ?? ""); } catch { finish(""); }
+      });
+      child.stdin!.on("error", () => {});
+      child.stdin!.end(JSON.stringify({ cwd, source }));
+    } catch {
+      finish("");
+    }
+  });
+}
+
+export default function (pi: any) {
+  const cache = new Map<string, string>(); // `${cwd}|${variante}` -> contexto (estable: no rompe el prompt cache)
+  const compacted = new Set<string>(); // sesiones compactadas que todavía no llamaron a log_session
+  const sessionOf = (ctx: any): string => {
+    try { return ctx?.sessionManager?.getSessionId?.() ?? ""; } catch { return ""; }
+  };
+  const contextFor = async (cwd: string, sid: string): Promise<string> => {
+    const key = `${cwd}|${compacted.has(sid) ? "compact" : "startup"}`;
+    if (!cache.has(key)) cache.set(key, await projectContext(cwd, compacted.has(sid) ? "compact" : "startup"));
+    return cache.get(key)!;
+  };
+
+  pi.on("before_agent_start", async (event: any, ctx: any) => {
+    const text = await contextFor(ctx.cwd, sessionOf(ctx));
+    if (!text) return;
+    return { systemPrompt: [...(event.systemPrompt ?? []), text] };
+  });
+
+  pi.on("session.compacting", async (event: any, ctx: any) => {
+    const sid = event.sessionId ?? sessionOf(ctx);
+    if (!(await contextFor(ctx.cwd, sid))) return; // repo sin .bridges
+    compacted.add(sid);
+    return { context: [COMPACT_NOTE] };
+  });
+
+  pi.on("tool_execution_end", async (event: any, ctx: any) => {
+    if (/log_session$/.test(event.toolName ?? "")) compacted.delete(sessionOf(ctx));
+  });
+}
