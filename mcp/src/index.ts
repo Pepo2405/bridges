@@ -56,7 +56,7 @@ if (process.argv[2] === "hook") {
   process.exit(0);
 }
 
-const server = new McpServer({ name: "bridges-mcp", version: "0.2.0" });
+const server = new McpServer({ name: "bridges-mcp", version: "0.2.2" });
 
 server.registerTool(
   "search_vault",
