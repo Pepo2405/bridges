@@ -22,7 +22,7 @@ no tests yet — plan 003 fixes that, and plan 004 makes CI actually run them.
 | 008 | Auto-updater **design/spike** | P3 | M | code-signing (external) | TODO |
 | 009 | Wikilink heading autocomplete + fix stale README | P3 | S/M | 003 (soft) | DONE (auto) — S1 README: línea de CodeMirror/autocomplete movida de backlog a "Resuelto"; S2 `parseHeadings` puro en `links.ts`; S3 `wikilinkCompletions` ofrece headings tras `[[Nota#` (LinkTarget extendido con `headings?`), `linkTargets` en App.tsx memoizado por `docs()` (perf); S4 `links.test.ts` (5 tests). `tsc` + 34 tests ✓. Falta smoke manual en `tauri dev` (`[[` nombres, `[[Nota#` headings) |
 | 010 | Vaults offline (locales, sin token ni servidor) | P2 | M/L | 003 | DONE — comando Rust `vault_trash` (papelera SO); modo local en `store.ts` (enfoque C: motor remoto gateado por `rt.api === null`, intacto); `localSearch` + 4 tests (22/22 pass); toggle "Local" en AddVaultDialog; gating UI server-only. `tsc` + `cargo check` ✓. Falta smoke manual en `tauri dev` |
-| 011 | Memoria de agentes a la par de Engram (save_decision, log_session, project_context, hook, búsqueda AND→OR) | P1 | M | — | DONE (rama `feat/memoria-agentes`) — falta release `mcp-v0.2.0` |
+| 011 | Memoria de agentes a la par de Engram (save_decision, log_session, project_context, hook, búsqueda AND→OR) | P1 | M | — | DONE — release `mcp-v0.2.1`; `setup opencode|omp` en main (falta release) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
