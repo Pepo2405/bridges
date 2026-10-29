@@ -9,14 +9,19 @@ detecta y le inyecta el contexto del proyecto (Decisiones vigentes + próximos p
 
 - `transform_tool_result`: cuando una tool trabaja dentro de un repo con `.bridges`
   (terminal con workdir, read_file/patch/write_file/search_files con path, un `cd` en el
-  comando), agrega el contexto al resultado de esa tool.
+  comando), agrega el contexto al resultado (en un resultado JSON, como clave `bridges_memoria`).
 - `pre_llm_call`: si el mensaje del usuario nombra un repo con `.bridges` (o su ruta), lo
-  inyecta antes de que el agente toque nada. Si el historial muestra una compactación nueva,
-  vuelve a inyectar el contexto de los proyectos activos con el pedido de escribir la
-  Bitácora (`log_session`).
+  inyecta antes de que el agente toque nada. Los nombres que son una sola palabra (forge,
+  goblin, bulón) solo cuentan con contexto: entre backticks o con "repo", "proyecto",
+  "código", "rama", etc. en el mensaje. Si el historial muestra una compactación nueva,
+  vuelve a inyectar el contexto de los proyectos activos con el pedido de Bitácora.
 
 Todo va al mensaje del usuario o al resultado de la tool, nunca al system prompt (no rompe
 el prompt cache). Fail-open: si algo falla o tarda, no inyecta nada. Saltea subagentes.
+
+Telemetría (sin contenido de mensajes, solo el término que matcheó):
+`$HERMES_HOME/logs/bridges-memoria.jsonl`. Reporte:
+`python <este archivo> report [días]`. Apagado sin tocar la config: BRIDGES_MEMORIA_OFF=1.
 """
 from __future__ import annotations
 
@@ -24,23 +29,58 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 CMD: List[str] = __BRIDGES_CMD__
 TIMEOUT_S = 8
 MAX_PROJECTS_PER_CALL = 2
 COMPACTION_MARKER = "[CONTEXT COMPACTION"
 INDEX_TTL_S = 300
+LOG_MAX_BYTES = 5_000_000
+# Palabras que, en el mensaje, hacen creíble que un nombre de una sola palabra sea el repo.
+NAME_CONTEXT_RE = re.compile(
+    r"\b(repo|repos|repositorio|proyecto|project|codigo|code|rama|branch|worktree|pr|commit|"
+    r"deploy|release|app|vault|bitacora|decisiones)\b"
+)
 
 _lock = threading.Lock()
 _sessions: Dict[str, Dict[str, Any]] = {}
 _index: List[Any] = []
 _index_at = 0.0
 
+Hit = Tuple[Path, str]  # (raíz del repo, cómo se detectó: "path" / "name:<término>" / "active")
+
+
+def _off() -> bool:
+    return os.environ.get("BRIDGES_MEMORIA_OFF") == "1"
+
+
+# ── Telemetría ──────────────────────────────────────────────────────────────
+
+def _log_path() -> Path:
+    home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+    return Path(home) / "logs" / "bridges-memoria.jsonl"
+
+
+def _log(event: str, **fields: Any) -> None:
+    try:
+        p = _log_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if p.exists() and p.stat().st_size > LOG_MAX_BYTES:
+            p.replace(p.with_suffix(".jsonl.1"))
+        line = json.dumps({"ts": round(time.time(), 3), "event": event, **fields}, ensure_ascii=False)
+        with _lock, p.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
+# ── Detección de proyectos ──────────────────────────────────────────────────
 
 def _code_dirs() -> List[Path]:
     raw = os.environ.get("BRIDGES_CODE_DIRS")
@@ -51,7 +91,10 @@ def _code_dirs() -> List[Path]:
 
 def _session(sid: Optional[str]) -> Dict[str, Any]:
     with _lock:
-        return _sessions.setdefault(sid or "", {"injected": set(), "active": {}, "compactions": 0, "child": False})
+        return _sessions.setdefault(sid or "", {
+            "injected": set(), "active": {}, "compactions": 0, "child": False,
+            "by_message": set(), "used": set(),
+        })
 
 
 def _norm(text: str) -> str:
@@ -91,7 +134,7 @@ def _find_root(path: Path) -> Optional[Path]:
 
 
 def _repo_index() -> List[Any]:
-    """[(regex, root)] de los repos con `.bridges` en ~/code (2 niveles), cacheado."""
+    """[(regex, root, término, ambiguo)] de los repos con `.bridges` en ~/code (2 niveles), cacheado."""
     global _index, _index_at
     if _index and time.time() - _index_at < INDEX_TTL_S:
         return _index
@@ -117,7 +160,8 @@ def _repo_index() -> List[Any]:
                 if not parts or len("".join(parts)) < 4:
                     continue
                 pattern = r"(?<![\w-])" + r"[-_ ]?".join(re.escape(p) for p in parts) + r"(?![\w-])"
-                entries.append((re.compile(pattern), root))
+                # Una sola palabra (forge, goblin, bulon) puede ser una palabra común.
+                entries.append((re.compile(pattern), root, "-".join(parts), len(parts) == 1))
     _index, _index_at = entries, time.time()
     return entries
 
@@ -125,21 +169,32 @@ def _repo_index() -> List[Any]:
 _PATH_RE = re.compile(r"(?:~|/Users/[^/\s]+|/home/[^/\s]+)/[^\s'\"`;|&()<>]+")
 
 
-def _paths_in_text(text: str) -> List[Path]:
-    return [Path(m).expanduser() for m in _PATH_RE.findall(text or "")]
+def _paths_in_text(text: str) -> List[str]:
+    return _PATH_RE.findall(text or "")
 
 
-def _roots_in_text(text: str) -> List[Path]:
-    roots: List[Path] = []
-    for p in _paths_in_text(text):
-        r = _find_root(p)
-        if r and r not in roots:
-            roots.append(r)
+def _roots_in_text(text: str) -> List[Hit]:
+    hits: List[Hit] = []
+    seen = set()
+    for raw in _paths_in_text(text):
+        r = _find_root(Path(raw).expanduser())
+        if r and r not in seen:
+            seen.add(r)
+            hits.append((r, "path"))
     normalized = _norm(text or "")
-    for rx, root in _repo_index():
-        if root not in roots and rx.search(normalized):
-            roots.append(root)
-    return roots
+    has_context = bool(NAME_CONTEXT_RE.search(normalized))
+    for rx, root, term, ambiguous in _repo_index():
+        if root in seen:
+            continue
+        m = rx.search(normalized)
+        if not m:
+            continue
+        quoted = normalized[max(0, m.start() - 1):m.start()] == "`" and normalized[m.end():m.end() + 1] == "`"
+        if ambiguous and not (has_context or quoted):
+            continue
+        seen.add(root)
+        hits.append((root, f"name:{term}"))
+    return hits
 
 
 def _roots_in_args(args: Any) -> List[Path]:
@@ -152,7 +207,7 @@ def _roots_in_args(args: Any) -> List[Path]:
             cands.append(Path(v))
     cmd = args.get("command")
     if isinstance(cmd, str):
-        cands += _paths_in_text(cmd)
+        cands += [Path(p).expanduser() for p in _paths_in_text(cmd)]
     roots: List[Path] = []
     for c in cands:
         r = _find_root(c)
@@ -161,31 +216,50 @@ def _roots_in_args(args: Any) -> List[Path]:
     return roots
 
 
-def _project_context(root: Path, source: str) -> str:
+# ── Inyección ───────────────────────────────────────────────────────────────
+
+def _project_context(root: Path, source: str) -> Tuple[str, Optional[str]]:
+    """(contexto, error). Contexto vacío sin error = el proyecto no resolvió (sin vault, etc.)."""
     try:
         out = subprocess.run(
             [*CMD, "hook", "session-start"],
             input=json.dumps({"cwd": str(root), "source": source}),
             capture_output=True, text=True, timeout=TIMEOUT_S, cwd=str(root),
         )
-        data = json.loads(out.stdout or "{}")
-        return str(data.get("hookSpecificOutput", {}).get("additionalContext", "") or "")
-    except Exception:
-        return ""
+        if out.returncode != 0:
+            return "", f"exit {out.returncode}"
+        if not (out.stdout or "").strip():
+            return "", None
+        data = json.loads(out.stdout)
+        return str(data.get("hookSpecificOutput", {}).get("additionalContext", "") or ""), None
+    except subprocess.TimeoutExpired:
+        return "", "timeout"
+    except Exception as e:
+        return "", type(e).__name__
 
 
-def _inject(sess: Dict[str, Any], roots: List[Path], source: str, force: bool = False) -> str:
+def _inject(sess: Dict[str, Any], sid: str, hits: List[Hit], source: str, trigger: str,
+            force: bool = False) -> str:
     parts: List[str] = []
-    for root in roots[:MAX_PROJECTS_PER_CALL]:
+    for root, how in hits[:MAX_PROJECTS_PER_CALL]:
         key = _project_key(root)
         with _lock:
             if key in sess["injected"] and not force:
                 continue
             sess["injected"].add(key)  # se marca antes: aunque falle, no se reintenta en cada tool
-        ctx = _project_context(root, source)
-        if ctx:
+        t0 = time.perf_counter()
+        ctx, err = _project_context(root, source)
+        ms = round((time.perf_counter() - t0) * 1000)
+        if err:
+            _log("error", session=sid, project=key, trigger=trigger, match=how, ms=ms, error=err)
+        elif not ctx:
+            _log("empty", session=sid, project=key, trigger=trigger, match=how, ms=ms)
+        else:
             with _lock:
                 sess["active"][key] = root
+                if trigger == "message":
+                    sess["by_message"].add(key)
+            _log("inject", session=sid, project=key, trigger=trigger, match=how, ms=ms, chars=len(ctx))
             parts.append(ctx)
     return "\n\n".join(parts)
 
@@ -200,6 +274,8 @@ def _text_of(content: Any) -> str:
 
 def _on_pre_llm_call(session_id: str = "", user_message: Any = None, conversation_history: Any = None,
                      parent_session_id: str = "", **_: Any) -> Optional[Dict[str, str]]:
+    if _off():
+        return None
     try:
         sess = _session(session_id)
         if parent_session_id:
@@ -216,33 +292,42 @@ def _on_pre_llm_call(session_id: str = "", user_message: Any = None, conversatio
             sess["compactions"] = len(marks)
             if recent:
                 summary = _text_of(history[marks[-1]].get("content"))
-                roots = list(sess["active"].values())
-                roots += [r for r in _roots_in_text(summary) if r not in roots]
+                active = list(sess["active"].values())
+                hits: List[Hit] = [(r, "active") for r in active]
+                hits += [h for h in _roots_in_text(summary) if h[0] not in active]
                 with _lock:
                     sess["injected"] = set()
-                ctx = _inject(sess, roots, "compact", force=True)
+                ctx = _inject(sess, session_id, hits, "compact", "compact", force=True)
                 if ctx:
                     parts.append(ctx)
 
         # El usuario nombra un proyecto: contexto antes de que el agente toque nada.
-        roots = _roots_in_text(_text_of(user_message))
-        ctx = _inject(sess, roots, "startup")
+        ctx = _inject(sess, session_id, _roots_in_text(_text_of(user_message)), "startup", "message")
         if ctx:
             parts.append(ctx)
         return {"context": "\n\n".join(parts)} if parts else None
-    except Exception:
+    except Exception as e:
+        _log("error", session=session_id, hook="pre_llm_call", error=type(e).__name__)
         return None
 
 
 def _on_transform_tool_result(tool_name: str = "", args: Any = None, result: Any = None,
                               session_id: str = "", **_: Any) -> Optional[str]:
+    if _off():
+        return None
     try:
         if not isinstance(result, str) or "bridges" in (tool_name or "").lower():
             return None
         sess = _session(session_id)
         if sess["child"]:
             return None
-        roots = [r for r in _roots_in_args(args) if _project_key(r) not in sess["injected"]]
+        touched = _roots_in_args(args)
+        for r in touched:  # señal de utilidad: un repo inyectado por el mensaje que después se usa
+            key = _project_key(r)
+            if key in sess["by_message"] and key not in sess["used"]:
+                sess["used"].add(key)
+                _log("used", session=session_id, project=key, tool=tool_name)
+        roots = [r for r in touched if _project_key(r) not in sess["injected"]]
         if not roots:
             return None
         # Muchos resultados son JSON y hay consumidores que los parsean (execute_code): en un
@@ -254,17 +339,83 @@ def _on_transform_tool_result(tool_name: str = "", args: Any = None, result: Any
             pass
         if parsed is not None and not isinstance(parsed, dict):
             return None  # JSON que no es objeto (lista, número): no hay dónde ponerlo sin romperlo
-        ctx = _inject(sess, roots, "startup")
+        ctx = _inject(sess, session_id, [(r, "path") for r in roots], "startup", f"tool:{tool_name}")
         if not ctx:
             return None
         if isinstance(parsed, dict):
             parsed["bridges_memoria"] = ctx
             return json.dumps(parsed, ensure_ascii=False)
         return f"{result}\n\n[Bridges · memoria del proyecto]\n{ctx}"
-    except Exception:
+    except Exception as e:
+        _log("error", session=session_id, hook="transform_tool_result", error=type(e).__name__)
         return None
 
 
 def register(ctx) -> None:
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("transform_tool_result", _on_transform_tool_result)
+
+
+# ── Reporte ─────────────────────────────────────────────────────────────────
+
+def report(days: float = 14) -> str:
+    """Resumen de la telemetría de los últimos `days` días, con umbrales."""
+    p = _log_path()
+    since = time.time() - days * 86400
+    rows = []
+    for f in (p.with_suffix(".jsonl.1"), p):
+        if f.exists():
+            for line in f.read_text(encoding="utf-8").splitlines():
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if r.get("ts", 0) >= since:
+                    rows.append(r)
+    inj = [r for r in rows if r.get("event") == "inject"]
+    errs = [r for r in rows if r.get("event") == "error"]
+    by_day: Dict[str, Dict[str, int]] = {}
+    for r in inj:
+        day = time.strftime("%Y-%m-%d", time.localtime(r["ts"]))
+        kind = "tool" if str(r.get("trigger", "")).startswith("tool:") else str(r.get("trigger", "?"))
+        by_day.setdefault(day, {}).setdefault(kind, 0)
+        by_day[day][kind] += 1
+    ms = sorted(int(r.get("ms", 0)) for r in inj)
+    p95 = ms[min(len(ms) - 1, int(len(ms) * 0.95))] if ms else 0
+    msg = {(r.get("session"), r.get("project")) for r in inj if r.get("trigger") == "message"}
+    used = {(r.get("session"), r.get("project")) for r in rows if r.get("event") == "used"}
+    unused = msg - used
+    noise = len(unused) / len(msg) if msg else 0.0
+    noisy_terms: Dict[str, int] = {}
+    for r in inj:
+        if r.get("trigger") == "message" and (r.get("session"), r.get("project")) in unused:
+            term = str(r.get("match", "?"))
+            noisy_terms[term] = noisy_terms.get(term, 0) + 1
+    sessions = {r.get("session") for r in inj}
+    chars = sum(int(r.get("chars", 0)) for r in inj)
+
+    lines = [f"bridges-memoria — últimos {days:g} días ({p})"]
+    lines.append(f"- Inyecciones: {len(inj)} en {len(sessions)} sesiones (~{chars // 4} tokens en total)")
+    for day in sorted(by_day):
+        lines.append(f"  {day}: " + ", ".join(f"{k} {v}" for k, v in sorted(by_day[day].items())))
+    kinds = sorted({str(e.get("error")) for e in errs})
+    lines.append(f"- Errores: {len(errs)}" + (f" ({', '.join(kinds)})" if errs else ""))
+    lines.append(f"- Latencia p95: {p95} ms")
+    terms = ", ".join(f"{k} x{v}" for k, v in sorted(noisy_terms.items()))
+    lines.append(f"- Ruido (inyectado por mensaje y nunca usado en la sesión): {noise:.0%} de {len(msg)}"
+                 + (f" — términos: {terms}" if terms else ""))
+    alerts = []
+    if not inj:
+        alerts.append("0 inyecciones: si trabajaste en repos con .bridges desde Hermes, el plugin no está andando")
+    if errs:
+        alerts.append(f"{len(errs)} errores: revisar")
+    if p95 > 2000:
+        alerts.append(f"latencia p95 {p95} ms > 2000")
+    if len(msg) >= 5 and noise > 0.3:
+        alerts.append(f"ruido {noise:.0%} > 30%: ajustar los términos de arriba")
+    lines.append("- Alertas: " + ("; ".join(alerts) if alerts else "ninguna"))
+    return "\n".join(lines)
+
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "report":
+    print(report(float(sys.argv[2]) if len(sys.argv) > 2 else 14))

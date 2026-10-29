@@ -75,7 +75,11 @@ como arranca en `~`, detecta el proyecto por lo que toca (paths/workdir/`cd` de 
 `transform_tool_result`) o nombra (repo o ruta en el mensaje → `pre_llm_call`, índice de
 `~/code` a 2 niveles, override `BRIDGES_CODE_DIRS`) e inyecta el contexto una vez por proyecto
 y sesión; tras una compactación lo re-inyecta con el pedido de Bitácora. No edita el
-`config.yaml`: solo avisa si falta el MCP. El
+`config.yaml`: solo avisa si falta el MCP. Los nombres de una sola palabra (forge, goblin,
+bulón) solo disparan con contexto (backticks o "repo", "proyecto", "código"…). Telemetría
+sin contenido de mensajes en `$HERMES_HOME/logs/bridges-memoria.jsonl`; reporte con
+`python ~/.hermes/plugins/bridges-memoria/__init__.py report [días]`; apagado con
+`BRIDGES_MEMORIA_OFF=1` o `hermes plugins disable bridges-memoria`. El
 comando default es el que está corriendo; si es el binario del plugin de Claude (ruta con
 versión), pasá `--command` con algo estable.
 

@@ -147,6 +147,7 @@ describe("setup hermes", () => {
       ["pxsol/pxsol-blanco", { vault: "Px", folder: "01 - Proyectos/pxsol-blanco" }],
       ["goblin", { vault: "Goblin", folder: "" }],
       ["forge", { vault: "Bridges", folder: "" }],
+      ["bulon", { vault: "Personal", folder: "01 - Proyectos/Bulón" }],
     ] as const) {
       mkdirSync(join(home, "code", repo, "src"), { recursive: true });
       writeFileSync(join(home, "code", repo, ".bridges"), JSON.stringify(marker));
@@ -157,13 +158,14 @@ describe("setup hermes", () => {
     const py = [join(process.env.HOME ?? "", ".hermes/hermes-agent/venv/bin/python"), "python3"].find((p) =>
       p === "python3" || existsSync(p))!;
     const r = Bun.spawnSync([py, join(import.meta.dir, "integrations/hermes_plugin_test.py")], {
-      env: { ...process.env, HOME: home, PLUGIN_FILE: file },
+      // HERMES_HOME explícito: si no, la telemetría del test iría al log real de Hermes.
+      env: { ...process.env, HOME: home, HERMES_HOME: join(home, ".hermes-test"), PLUGIN_FILE: file },
       stderr: "pipe", stdout: "pipe",
     });
     const out = r.stderr.toString() + r.stdout.toString();
     if (r.exitCode !== 0) console.error(out);
     expect(r.exitCode).toBe(0);
-    expect(out).toMatch(/Ran 12 tests/);
+    expect(out).toMatch(/Ran 15 tests/);
   });
 });
 
