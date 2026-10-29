@@ -16,11 +16,17 @@ export const FTS_TOKENIZER = "unicode61 remove_diacritics 2";
  * Convierte texto libre del usuario en una query MATCH segura de FTS5: tokeniza
  * por letras/números (descarta la sintaxis especial), envuelve cada token en
  * comillas y agrega `*` para prefix-match. `op` "AND" (default, implícito) exige
- * todos los términos; "OR" acepta cualquiera. "" si no hay tokens.
+ * todos los términos; "OR" acepta cualquiera (sin los tokens de 1-2 letras). "" si no hay tokens.
  */
 export function toMatchQuery(query: string, op: "AND" | "OR" = "AND"): string {
-  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu);
+  let tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu);
   if (!tokens?.length) return "";
+  // En OR, "de"*/"el"* matchearían casi todo el vault: se descartan los tokens de 1-2
+  // letras (salvo que no quede ninguno).
+  if (op === "OR") {
+    const long = tokens.filter((t) => [...t].length > 2);
+    if (long.length) tokens = long as RegExpMatchArray;
+  }
   return tokens.map((t) => `"${t}"*`).join(op === "OR" ? " OR " : " ");
 }
 

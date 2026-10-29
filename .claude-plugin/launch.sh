@@ -31,12 +31,17 @@ if [ ! -x "$bin" ]; then
   mkdir -p "$cache_dir"
   url="https://github.com/${REPO}/releases/download/${TAG}/bridges-mcp-${plat}"
   echo "[bridges-mcp] descargando binario ${plat} (${TAG})..." >&2
-  if ! curl -fsSL "$url" -o "$bin"; then
+  # Descarga a un temporal y mv atómico: el servidor MCP y el hook de SessionStart
+  # pueden arrancar a la vez y no deben pisarse el binario. Timeouts para no colgar
+  # la sesión sin red.
+  tmp="${bin}.$$"
+  if ! curl -fsSL --connect-timeout 5 --max-time 25 "$url" -o "$tmp"; then
     echo "[bridges-mcp] falló la descarga de $url" >&2
-    rm -f "$bin"
+    rm -f "$tmp"
     exit 1
   fi
-  chmod +x "$bin"
+  chmod +x "$tmp"
+  mv -f "$tmp" "$bin"
 fi
 
 # Sin args: servidor MCP por stdio. `hook session-start`: modo hook (ver mcp/src/hook.ts).

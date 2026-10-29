@@ -5,7 +5,7 @@
     {
       "name": "bridges",
       "source": "./",
-      "description": "MCP read-only del vault + skill bridges-docs + /bridges + agente doc-writer."
+      "description": "MCP del vault (búsqueda, lectura y escritura con undo) + memoria de agentes (Decisiones + Bitácora, hook SessionStart) + skill bridges-docs + /bridges + agente doc-writer."
     }
   ]
 }

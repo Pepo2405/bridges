@@ -80,6 +80,18 @@ test("si ninguna nota tiene TODOS los términos, cae a OR rankeado por BM25", ()
   expect(hits).toContain("solo-plano.md");
 });
 
+test("con pathPrefix: si el AND solo matchea fuera de la carpeta, cae a OR dentro", () => {
+  write("Docs/auth.md", "# Auth\nauth sesiones");
+  write("Decisiones/ses.md", "# Ses\nsesiones en redis");
+  expect(searchLocal(dir, "auth sesiones", 10, "Decisiones/").map((h) => h.path)).toEqual(["Decisiones/ses.md"]);
+});
+
+test("en OR se ignoran los tokens de 1-2 letras", () => {
+  write("ruido.md", "# Ruido\nde el la");
+  write("plano2.md", "# P\nplano");
+  expect(paths("plano de inexistentezz")).toEqual(["plano2.md"]);
+});
+
 test("con AND alcanza, no agrega los matches parciales", () => {
   write("ambos.md", "# Ambos\nzorro azul");
   write("uno.md", "# Uno\nzorro rojo");

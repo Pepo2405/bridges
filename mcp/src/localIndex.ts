@@ -90,11 +90,17 @@ function sweep(vaultDir: string) {
 }
 
 /** Búsqueda full-text contra el índice local, manteniéndolo fresco antes de consultar.
- *  AND de todos los términos; si no hay resultados, OR (ver searchAndThenOr). */
-export function searchLocal(vaultDir: string, query: string, limit: number): SearchHit[] {
+ *  AND de todos los términos; si no hay resultados (ya filtrados por `pathPrefix`), OR. */
+export function searchLocal(vaultDir: string, query: string, limit: number, pathPrefix?: string): SearchHit[] {
   if (!db) init();
   sweep(vaultDir);
-  const rows = searchAndThenOr(query, (match) => qSearch.all(match, limit) as Row[]);
+  // El prefijo se filtra DENTRO del run: si el AND solo matchea fuera de la carpeta,
+  // el resultado filtrado queda vacío y tiene que caer a OR igual.
+  const rows = searchAndThenOr(query, (match) =>
+    pathPrefix
+      ? (qSearch.all(match, 50) as Row[]).filter((r) => r.path.startsWith(pathPrefix)).slice(0, limit)
+      : (qSearch.all(match, limit) as Row[]),
+  );
   return rows.map((r) => ({
     path: r.path,
     title: r.title,

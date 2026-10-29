@@ -101,7 +101,7 @@ export async function searchVault(
   let hits: SearchHit[];
   if (dir && LOCAL_ENABLED) {
     try {
-      hits = searchLocal(dir, query, fetchN);
+      hits = searchLocal(dir, query, limit, pathPrefix);
     } catch (e) {
       // El índice local falló (dir inaccesible, etc.): caemos al server por HTTP.
       // Con vault nombrado no hay fallback: el server HTTP es un solo vault (por token).
