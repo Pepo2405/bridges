@@ -9,8 +9,15 @@
  *   - list_vaults    vaults configurados en la app de Bridges (nombre, ruta, default)
  * Cada tool corre contra el disco local (si resolveVaultDir resuelve un vault) o por HTTP.
  *
+ * Memoria de agentes (Decisiones + Bitácora del proyecto del .bridges, ver memory.ts):
+ *   - project_context  índice de Decisiones vigentes + última Bitácora (siempre)
+ *   - save_decision / log_session  (con las write-tools)
+ *
  * Si el vault es local y BRIDGES_MCP_READONLY!=1, además registra 5 write-tools:
  *   - create_note / update_note / delete_note / restore_note / list_history
+ *
+ * Modo hook: `bridges-mcp hook session-start` (stdin JSON de Claude Code) imprime el
+ * contexto del proyecto y sale, sin levantar el servidor MCP. Ver hook.ts.
  * La escritura es local-only (nunca HTTP) y toda op destructiva es recuperable
  * (.bridges/history + .bridges/trash). Ver docs/superpowers/specs/2026-07-06-mcp-write-fase0-design.md
  *
@@ -34,6 +41,13 @@ import { searchVault, readNote, allDocs, effectiveVaultDir, isLocalMode } from "
 import { getBacklinks, getOutgoingLinks } from "./graph";
 import { readVaults, formatVaults } from "./config";
 import { createNote, updateNote, deleteNote, restoreNote, listHistory } from "./writer";
+import { resolveProject, projectContext, saveDecision, logSession, TIPOS } from "./memory";
+import { runHook } from "./hook";
+
+if (process.argv[2] === "hook") {
+  process.stdout.write(runHook(process.argv[3], await Bun.stdin.text()));
+  process.exit(0);
+}
 
 const server = new McpServer({ name: "bridges-mcp", version: "0.1.0" });
 
@@ -210,6 +224,40 @@ server.registerTool(
   },
 );
 
+// ── Memoria de agentes ───────────────────────────────────────────────────
+// El proyecto sale del .bridges de `cwd` (o del cwd del MCP), o de vault+folder.
+const projectArgs = {
+  cwd: z
+    .string()
+    .optional()
+    .describe(
+      "Ruta del repo (o una subcarpeta) que tiene el .bridges. Default: el cwd del MCP. " +
+        "Pasala si tu proceso no corre dentro del repo.",
+    ),
+  vault: z.string().optional().describe("Vault explícito (ver list_vaults), si no hay .bridges."),
+  folder: z.string().optional().describe("Carpeta del proyecto dentro del vault (con `vault`; default raíz)."),
+};
+
+server.registerTool(
+  "project_context",
+  {
+    title: "Contexto de memoria del proyecto",
+    description:
+      "Llamalo al empezar a trabajar en un repo: devuelve las Decisiones vigentes del proyecto " +
+      "(tipo, y si hay que revisarlas) y los próximos pasos de la última Bitácora. Leé la nota " +
+      "de una Decisión (read_note) antes de tocar ese tema.",
+    inputSchema: projectArgs,
+  },
+  async ({ cwd, vault, folder }) => {
+    try {
+      const text = projectContext(resolveProject({ cwd, vault, folder }));
+      return { content: [{ type: "text", text }] };
+    } catch (e) {
+      return { isError: true, content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }] };
+    }
+  },
+);
+
 // ── Write-tools (Fase 0) ──────────────────────────────────────────────────
 // Solo en modo local y con write habilitado (opt-out con BRIDGES_MCP_READONLY=1).
 if (isLocalMode() && process.env.BRIDGES_MCP_READONLY !== "1") {
@@ -324,6 +372,63 @@ if (isLocalMode() && process.env.BRIDGES_MCP_READONLY !== "1") {
     async ({ path, from, timestamp, vault }) => {
       try {
         return json(restoreNote(dirFor(vault), { path, from, timestamp }));
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "save_decision",
+    {
+      title: "Guardar una Decisión del proyecto (memoria)",
+      description:
+        "Guarda lo aprendido en Decisiones/<topic>.md del proyecto, en una sola llamada. " +
+        "Guardá sin preguntar apenas: terminás un bugfix (con la causa raíz), se toma una decisión " +
+        "de diseño o se elige una librería, descubrís una trampa del código, cambia config/entorno, " +
+        "se fija una convención, o el usuario confirma/rechaza un enfoque. No guardes lo que ya dice " +
+        "el diff. Una nota por tema: si el topic ya existe (sin importar mayúsculas/acentos) se " +
+        "actualiza; los campos omitidos se conservan. Para marcar una nota como revisada, mandá " +
+        "solo topic + cambio. Devuelve `similares`: si alguno es el mismo tema, unificalos.",
+      inputSchema: {
+        topic: z.string().min(1).describe("Tema: sustantivo estable, sin fecha. P. ej. 'Auth - modelo de sesiones'."),
+        tipo: z.enum(TIPOS).optional().describe("decision | bugfix | patron | config | preferencia | descubrimiento (default decision)."),
+        que: z.string().optional().describe("Qué se hizo o decidió (una oración). Requerido al crear."),
+        porque: z.string().optional().describe("Por qué: qué lo motivó. Requerido al crear."),
+        donde: z.string().optional().describe("Archivos o paths afectados."),
+        aprendido: z.string().optional().describe("Trampas o casos borde."),
+        cambio: z.string().optional().describe("Línea para ## Cambios (default 'creada'/'actualizada')."),
+        reemplaza: z.string().optional().describe("Topic de otra Decisión que esta deja sin efecto."),
+        ...projectArgs,
+      },
+    },
+    async ({ cwd, vault, folder, ...input }) => {
+      try {
+        return json(saveDecision(resolveProject({ cwd, vault, folder }), input));
+      } catch (e) { return fail(e); }
+    },
+  );
+
+  server.registerTool(
+    "log_session",
+    {
+      title: "Escribir la Bitácora de la sesión (handoff)",
+      description:
+        "Handoff en Bitácora/<AAAA-MM-DD> - <tema>.md: llamalo al cerrar una sesión que dejó algo " +
+        "hecho o pendiente, y apenas notes que el contexto se compactó. Mismo día y tema: suma a las " +
+        "secciones existentes (Objetivo y Próximos pasos se reemplazan). Las secciones vacías se omiten.",
+      inputSchema: {
+        tema: z.string().min(1).describe("Tema corto de la sesión."),
+        objetivo: z.string().optional(),
+        instrucciones: z.string().optional().describe("Instrucciones o preferencias que dio el usuario."),
+        descubrimientos: z.string().optional(),
+        hecho: z.string().optional(),
+        proximos: z.string().optional().describe("Próximos pasos (los muestra project_context)."),
+        archivos: z.string().optional(),
+        ...projectArgs,
+      },
+    },
+    async ({ cwd, vault, folder, ...input }) => {
+      try {
+        return json(logSession(resolveProject({ cwd, vault, folder }), input));
       } catch (e) { return fail(e); }
     },
   );

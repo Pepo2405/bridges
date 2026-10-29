@@ -375,7 +375,7 @@ export function projectContext(
   for (const n of listNotes(p, DECISIONES)) {
     const { fm } = parseNote(readFileSync(join(p.dir, inFolder(p, `${DECISIONES}/${n}.md`)), "utf8"));
     if (fm.get("estado") === "reemplazada") continue;
-    let tag = fm.get("tipo") || "?";
+    let tag = fm.get("tipo") || "sin formato";
     const rev = fm.get("revisar_despues");
     if (rev && rev < today) tag += `, REVISAR: vencida ${rev}`;
     decs.push(`- ${n} (${tag})`);
