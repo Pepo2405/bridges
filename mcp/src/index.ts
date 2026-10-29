@@ -18,7 +18,7 @@
  *
  * Modo hook: `bridges-mcp hook session-start` (stdin JSON de Claude Code) imprime el
  * contexto del proyecto y sale, sin levantar el servidor MCP. Ver hook.ts.
- * Modo setup: `bridges-mcp setup <opencode|omp>` conecta otro agente (MCP + plugin de
+ * Modo setup: `bridges-mcp setup <opencode|omp|hermes>` conecta otro agente (MCP + plugin de
  * contexto/compactación). Ver setup.ts.
  * La escritura es local-only (nunca HTTP) y toda op destructiva es recuperable
  * (.bridges/history + .bridges/trash). Ver docs/superpowers/specs/2026-07-06-mcp-write-fase0-design.md

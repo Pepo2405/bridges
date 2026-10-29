@@ -92,6 +92,80 @@ describe("setup omp", () => {
   });
 });
 
+describe("setup hermes", () => {
+  const yamlCon = "model:\n  default: x\nmcp_servers:\n  nexus:\n    url: u\n  bridges:\n    command: bun\nplugins:\n  enabled:\n    - camofox\n  disabled: []\n";
+
+  test("escribe manifest + plugin y lo habilita; MCP presente → sin avisos", () => {
+    const { config, plugin } = agentPaths("hermes", home, env);
+    mkdirSync(join(config, ".."), { recursive: true });
+    writeFileSync(config, yamlCon);
+    const enabled: string[] = [];
+    const r = setupAgent("hermes", { cmd: CMD, home, env, enableHermesPlugin: (n) => (enabled.push(n), true) });
+    expect(plugin).toBe(join(home, ".hermes/plugins/bridges-memoria/__init__.py"));
+    expect(readFileSync(plugin, "utf8")).toContain(`CMD: List[str] = ${JSON.stringify(CMD)}`);
+    expect(readFileSync(join(home, ".hermes/plugins/bridges-memoria/plugin.yaml"), "utf8")).toContain("transform_tool_result");
+    expect(enabled).toEqual(["bridges-memoria"]);
+    expect(r.notes).toEqual([]);
+    expect(readFileSync(config, "utf8")).toBe(yamlCon); // nunca edita el config.yaml
+  });
+
+  test("ya habilitado y sin cambios: idempotente", () => {
+    const { config } = agentPaths("hermes", home, env);
+    mkdirSync(join(config, ".."), { recursive: true });
+    writeFileSync(config, yamlCon.replace("    - camofox\n", "    - camofox\n    - bridges-memoria\n"));
+    setupAgent("hermes", { cmd: CMD, home, env, enableHermesPlugin: () => true });
+    let called = false;
+    const r = setupAgent("hermes", { cmd: CMD, home, env, enableHermesPlugin: () => (called = true) });
+    expect(r.changes).toEqual([]);
+    expect(called).toBe(false);
+  });
+
+  test("sin MCP bridges y enable fallido → avisos con el comando a correr", () => {
+    const { config } = agentPaths("hermes", home, env);
+    mkdirSync(join(config, ".."), { recursive: true });
+    writeFileSync(config, "mcp_servers:\n  nexus:\n    url: u\n");
+    const r = setupAgent("hermes", { cmd: CMD, home, env, enableHermesPlugin: () => false });
+    expect(r.notes.join("\n")).toContain("hermes plugins enable bridges-memoria");
+    expect(r.notes.join("\n")).toContain("hermes mcp add bridges --command /usr/bin/bun --args run /x/mcp/src/index.ts");
+  });
+
+  test("HERMES_HOME (perfiles)", () => {
+    expect(agentPaths("hermes", home, { HERMES_HOME: "/h/profiles/x" } as any).plugin)
+      .toBe("/h/profiles/x/plugins/bridges-memoria/__init__.py");
+  });
+
+  test("el plugin generado funciona (tests de Python con el intérprete de Hermes)", () => {
+    const fake = join(home, "fake-hook.ts");
+    writeFileSync(fake, `
+      const data = JSON.parse(await Bun.stdin.text());
+      if (process.argv[2] !== "hook") process.exit(0);
+      const name = data.cwd.split("/").pop();
+      process.stdout.write(JSON.stringify({ hookSpecificOutput: { additionalContext: "CTX:" + data.source + ":" + name } }));
+    `);
+    for (const [repo, marker] of [
+      ["gym-admin", { vault: "Gym-Admin", folder: "" }],
+      ["pxsol/pxsol-blanco", { vault: "Px", folder: "01 - Proyectos/pxsol-blanco" }],
+      ["goblin", { vault: "Goblin", folder: "" }],
+    ] as const) {
+      mkdirSync(join(home, "code", repo, "src"), { recursive: true });
+      writeFileSync(join(home, "code", repo, ".bridges"), JSON.stringify(marker));
+    }
+    mkdirSync(join(home, "code", "sin-bridges"), { recursive: true });
+    const file = join(home, "plugin_under_test.py");
+    writeFileSync(file, renderIntegration("hermes", [process.execPath, fake]));
+    const py = [join(process.env.HOME ?? "", ".hermes/hermes-agent/venv/bin/python"), "python3"].find((p) =>
+      p === "python3" || existsSync(p))!;
+    const r = Bun.spawnSync([py, join(import.meta.dir, "integrations/hermes_plugin_test.py")], {
+      env: { ...process.env, HOME: home, PLUGIN_FILE: file },
+      stderr: "pipe", stdout: "pipe",
+    });
+    const out = r.stderr.toString() + r.stdout.toString();
+    if (r.exitCode !== 0) console.error(out);
+    expect(r.exitCode).toBe(0);
+    expect(out).toMatch(/Ran 10 tests/);
+  });
+});
+
 test("parseCommand: JSON o texto", () => {
   expect(parseCommand('["bun","run","/a b/index.ts"]')).toEqual(["bun", "run", "/a b/index.ts"]);
   expect(parseCommand("bun run /x.ts")).toEqual(["bun", "run", "/x.ts"]);

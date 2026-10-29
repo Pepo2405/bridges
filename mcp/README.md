@@ -62,14 +62,20 @@ stdin e imprime el contexto como `additionalContext` (con `source: "compact"`, a
 escribir la Bitácora). El plugin lo registra en `hooks/hooks.json`. Sin `.bridges` no
 imprime nada.
 
-**Otros agentes:** `bridges-mcp setup <opencode|omp> [--command '<cmd>'] [--dry-run]`
+**Otros agentes:** `bridges-mcp setup <opencode|omp|hermes> [--command '<cmd>'] [--dry-run]`
 (desde la fuente: `bun run mcp/src/index.ts setup opencode`). Agrega o actualiza la
 entrada `bridges` del MCP en la config del agente (conserva las otras y el `environment`;
 backup `*.bak-bridges-*`) e instala un plugin que hace lo mismo que el hook de Claude Code:
 contexto del proyecto en el system prompt (una vez por sesión, sin romper el prompt cache)
 y, al compactar, pedido de Bitácora hasta que el agente llama a `log_session`. Saltea
 subagentes. Archivos: OpenCode → `~/.config/opencode/plugins/bridges-memoria.js`, omp →
-`~/.omp/agent/extensions/bridges-memoria.ts` (plantillas en `src/integrations/`). El
+`~/.omp/agent/extensions/bridges-memoria.ts` (plantillas en `src/integrations/`).
+**Hermes** (`$HERMES_HOME/plugins/bridges-memoria/`, se habilita con `hermes plugins enable`):
+como arranca en `~`, detecta el proyecto por lo que toca (paths/workdir/`cd` de las tools →
+`transform_tool_result`) o nombra (repo o ruta en el mensaje → `pre_llm_call`, índice de
+`~/code` a 2 niveles, override `BRIDGES_CODE_DIRS`) e inyecta el contexto una vez por proyecto
+y sesión; tras una compactación lo re-inyecta con el pedido de Bitácora. No edita el
+`config.yaml`: solo avisa si falta el MCP. El
 comando default es el que está corriendo; si es el binario del plugin de Claude (ruta con
 versión), pasá `--command` con algo estable.
 

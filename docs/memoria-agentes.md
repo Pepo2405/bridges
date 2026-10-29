@@ -25,8 +25,9 @@ Solo en repos con un archivo `.bridges` en la raíz: `{ "vault": "...", "folder"
 | `log_session` | Escribir el handoff de la sesión en la Bitácora. |
 
 En OpenCode y omp lo mismo lo hace un plugin que instala
-`bun run ~/code/forge/mcp/src/index.ts setup <opencode|omp>`. En Hermes no hay inyección
-automática: llamá a `project_context` al retomar un repo.
+`bun run ~/code/forge/mcp/src/index.ts setup <opencode|omp>`. En Hermes, `setup hermes` instala un
+plugin que inyecta el contexto cuando la sesión toca o nombra un repo con `.bridges` (Hermes
+arranca en `~`); si igual no lo ves, llamá a `project_context` con `cwd`.
 
 Las tres aceptan `cwd` (ruta del repo). Pasalo si tu proceso no corre dentro del repo
 (Hermes, por ejemplo). Sin `.bridges`, podés pasar `vault` y `folder` explícitos.
