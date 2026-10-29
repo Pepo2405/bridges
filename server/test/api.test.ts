@@ -544,8 +544,12 @@ describe("búsqueda FTS5 (ranking, snippets, borrados)", () => {
 
   const post = (path: string, content: string) =>
     fetch(`${base}/documents`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ path, content }) });
-  const search = async (q: string) =>
-    (await (await fetch(`${base}/search?q=${encodeURIComponent(q)}`)).json()).results as {
+  const search = async (q: string, prefix?: string) =>
+    (await (
+      await fetch(
+        `${base}/search?q=${encodeURIComponent(q)}${prefix ? `&prefix=${encodeURIComponent(prefix)}` : ""}`,
+      )
+    ).json()).results as {
       path: string;
       title: string | null;
       snippet: string;
@@ -558,6 +562,7 @@ describe("búsqueda FTS5 (ranking, snippets, borrados)", () => {
     await post("incidental.md", "# Notas varias\nuna mención de kubernetes al pasar, nada más");
     await post("acentos.md", "# Biología\nla mitocondría produce energía en la célula");
     await post("ruido.md", "# Otro\ntexto sin relación alguna con el resto");
+    await post("01 - Proyectos/proyecto.md", "# Proyecto\nsoloprefijo deployment");
   });
   afterAll(() => cleanup());
 
@@ -585,6 +590,16 @@ describe("búsqueda FTS5 (ranking, snippets, borrados)", () => {
 
   test("insensible a acentos: 'mitocondria' encuentra 'mitocondría'", async () => {
     expect((await search("mitocondria")).map((h) => h.path)).toContain("acentos.md");
+  });
+
+  test("prefix filtra en SQL y no devuelve matches fuera del prefijo", async () => {
+    expect((await search("soloprefijo")).map((h) => h.path)).toContain("01 - Proyectos/proyecto.md");
+    expect((await search("soloprefijo", "01 - Proyectos/")).map((h) => h.path)).toEqual([
+      "01 - Proyectos/proyecto.md",
+    ]);
+    expect(await search("soloprefijo", "no-existe/")).toEqual([]);
+    // El prefijo es literal: % no es comodín de LIKE.
+    expect(await search("soloprefijo", "01 - Proy%")).toEqual([]);
   });
 
   test("los borrados quedan fuera de la búsqueda", async () => {

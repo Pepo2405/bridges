@@ -164,7 +164,7 @@ bun run tauri build --target universal-apple-darwin
 | `GET`  | `/health` | estado + `last_seq` |
 | `GET`  | `/sync?since=<seq>` | pull incremental de docs cambiados |
 | `GET`  | `/events` | stream SSE (`{type:"change",seq}`) |
-| `GET`  | `/search?q=<texto>` | búsqueda full-text con ranking BM25 (FTS5) |
+| `GET`  | `/search?q=<texto>&prefix=<path>` | búsqueda full-text con ranking BM25 (FTS5); `prefix` opcional filtra por prefijo de path |
 | `POST` | `/documents` | crear (`{path,title?,content}`) → 201 |
 | `POST` | `/documents/:id` | actualizar (`{path,content,base_version}`) → 200 / 409 |
 | `DELETE` | `/documents/:id` | borrado lógico (propaga `deleted=1`) |

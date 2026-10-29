@@ -98,6 +98,21 @@ test("con AND alcanza, no agrega los matches parciales", () => {
   expect(paths("zorro azul")).toEqual(["ambos.md"]);
 });
 
+test("pathPrefix filtra en SQL y no pierde matches fuera del top-50", () => {
+  for (let i = 0; i < 60; i++) write(`bulk-${i}.md`, `# oracle ${i}\nbody`);
+  write("01 - Proyectos/a.md", "# unrelated\n\noracle here");
+
+  const all = searchLocal(dir, "oracle", 50);
+  expect(all.length).toBe(50);
+  expect(all.some((h) => h.path.startsWith("01 - Proyectos/"))).toBe(false);
+
+  expect(searchLocal(dir, "oracle", 10, "01 - Proyectos/").map((h) => h.path)).toEqual([
+    "01 - Proyectos/a.md",
+  ]);
+  // El prefijo es literal: % y _ no son comodines de LIKE.
+  expect(searchLocal(dir, "oracle", 10, "01 - Proy%")).toEqual([]);
+});
+
 test("insensible a acentos: 'mitocondria' encuentra 'mitocondría'", () => {
   write("bio.md", "# Biología\nla mitocondría produce energía");
   expect(paths("mitocondria")).toContain("bio.md");

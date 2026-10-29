@@ -26,8 +26,28 @@ const qSearch = db.query<
    LIMIT 50`,
 );
 
+// Mismo query + filtro de path DENTRO del MATCH. Si el top-50 se recortara antes
+// de filtrar, los matches rankeados debajo del corte se perderían en silencio.
+// substr(...) compara el prefijo literal (sin comodines de LIKE).
+const qSearchPrefix = db.query<
+  { id: string; path: string; title: string | null; snippet: string },
+  [string, string, string]
+>(
+  `SELECT d.id, d.path, d.title,
+          snippet(documents_fts, 2, '', '', '…', 30) AS snippet
+   FROM documents_fts
+   JOIN documents d ON d.rowid = documents_fts.rowid
+   WHERE documents_fts MATCH ?1 AND d.vault = ?2 AND d.deleted = 0
+     AND substr(d.path, 1, length(?3)) = ?3
+   ORDER BY bm25(documents_fts, 10.0, 5.0, 1.0)
+   LIMIT 50`,
+);
+
 /** Búsqueda full-text (FTS5/BM25) sobre el índice de un vault. AND de todos los
- *  términos; si no hay resultados, OR (ver searchAndThenOr). */
-export function searchDocs(vault: string, query: string): SearchHit[] {
-  return searchAndThenOr(query, (match) => qSearch.all(match, vault));
+ *  términos; si no hay resultados, OR (ver searchAndThenOr). `pathPrefix`
+ *  restringe a paths que empiezan con ese texto, ya en SQL (antes de decidir el OR). */
+export function searchDocs(vault: string, query: string, pathPrefix?: string): SearchHit[] {
+  return searchAndThenOr(query, (match) =>
+    pathPrefix ? qSearchPrefix.all(match, vault, pathPrefix) : qSearch.all(match, vault),
+  );
 }

@@ -29,6 +29,7 @@ let db: Database | null = null;
 let qIns: ReturnType<Database["query"]>;
 let qDel: ReturnType<Database["query"]>;
 let qSearch: ReturnType<Database["query"]>;
+let qSearchPrefix: typeof qSearch;
 
 // relPath -> rowid estable, y relPath -> mtimeMs visto por última vez.
 const rowids = new Map<string, number>();
@@ -49,6 +50,14 @@ function init() {
   qSearch = db.query(
     `SELECT path, title, snippet(fts, 2, '', '', '…', 30) AS snippet
      FROM fts WHERE fts MATCH ?1 ORDER BY ${BM25} LIMIT ?2`,
+  );
+  // El prefijo se filtra DENTRO del MATCH: si se recortara el top-N antes de
+  // filtrar, un match rankeado fuera del top se perdería en silencio.
+  // substr(...) compara el prefijo literal (sin comodines de LIKE).
+  qSearchPrefix = db.query(
+    `SELECT path, title, snippet(fts, 2, '', '', '…', 30) AS snippet
+     FROM fts WHERE fts MATCH ?1 AND substr(path, 1, length(?3)) = ?3
+     ORDER BY ${BM25} LIMIT ?2`,
   );
 }
 
@@ -90,16 +99,14 @@ function sweep(vaultDir: string) {
 }
 
 /** Búsqueda full-text contra el índice local, manteniéndolo fresco antes de consultar.
- *  AND de todos los términos; si no hay resultados (ya filtrados por `pathPrefix`), OR. */
+ *  AND de todos los términos; si no hay resultados, OR (ver searchAndThenOr).
+ *  `pathPrefix` se aplica dentro del MATCH (no post-filtro) para no perder matches
+ *  fuera del top-N, y antes de decidir si hace falta caer a OR. */
 export function searchLocal(vaultDir: string, query: string, limit: number, pathPrefix?: string): SearchHit[] {
   if (!db) init();
   sweep(vaultDir);
-  // El prefijo se filtra DENTRO del run: si el AND solo matchea fuera de la carpeta,
-  // el resultado filtrado queda vacío y tiene que caer a OR igual.
   const rows = searchAndThenOr(query, (match) =>
-    pathPrefix
-      ? (qSearch.all(match, 50) as Row[]).filter((r) => r.path.startsWith(pathPrefix)).slice(0, limit)
-      : (qSearch.all(match, limit) as Row[]),
+    (pathPrefix ? qSearchPrefix.all(match, limit, pathPrefix) : qSearch.all(match, limit)) as Row[],
   );
   return rows.map((r) => ({
     path: r.path,

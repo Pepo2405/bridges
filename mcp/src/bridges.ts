@@ -76,10 +76,12 @@ const VAULT_DIR = resolveVaultDir() ?? undefined;
 // BRIDGES_LOCAL_SEARCH=0 para forzar siempre el camino HTTP.
 const LOCAL_ENABLED = process.env.BRIDGES_LOCAL_SEARCH !== "0";
 
-async function searchHttp(query: string, limit: number): Promise<SearchHit[]> {
+async function searchHttp(query: string, limit: number, pathPrefix?: string): Promise<SearchHit[]> {
   const headers: Record<string, string> = {};
   if (TOKEN) headers.authorization = `Bearer ${TOKEN}`;
-  const res = await fetch(`${BASE}/search?q=${encodeURIComponent(query)}`, { headers });
+  const params = new URLSearchParams({ q: query });
+  if (pathPrefix) params.set("prefix", pathPrefix);
+  const res = await fetch(`${BASE}/search?${params}`, { headers });
   if (!res.ok) throw new Error(`${BASE}/search → HTTP ${res.status}`);
   const data = (await res.json()) as { results?: SearchHit[] };
   return (data.results ?? []).slice(0, limit).map((h) => ({
@@ -95,9 +97,8 @@ export async function searchVault(
   vault?: string,
 ): Promise<SearchHit[]> {
   const dir = effectiveVaultDir(vault);
-  // Con filtro de path traemos el cap de resultados crudos (50) y recortamos a
-  // `limit` después de filtrar; sin filtro, pedimos directamente `limit`.
-  const fetchN = pathPrefix ? 50 : limit;
+  // El prefix se filtra DENTRO del índice (local o server). Filtrar después de
+  // recortar el top-N perdería en silencio los matches rankeados debajo del corte.
   let hits: SearchHit[];
   if (dir && LOCAL_ENABLED) {
     try {
@@ -107,14 +108,13 @@ export async function searchVault(
       // Con vault nombrado no hay fallback: el server HTTP es un solo vault (por token).
       if (vault) throw e;
       console.error(`[bridges-mcp] índice local falló, usando HTTP: ${e instanceof Error ? e.message : e}`);
-      hits = await searchHttp(query, fetchN);
+      hits = await searchHttp(query, limit, pathPrefix);
     }
   } else if (vault) {
     throw new Error(`no puedo buscar en el vault "${vault}" en modo HTTP: el server sirve un solo vault (por token).`);
   } else {
-    hits = await searchHttp(query, fetchN);
+    hits = await searchHttp(query, limit, pathPrefix);
   }
-  if (pathPrefix) hits = hits.filter((h) => h.path.startsWith(pathPrefix));
   return hits.slice(0, limit);
 }
 

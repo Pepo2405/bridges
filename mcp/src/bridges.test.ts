@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveVaultDir, readMarker, resolveNamedVault, searchVault } from "./bridges";
@@ -90,5 +90,15 @@ describe("searchVault con vault por nombre", () => {
   test("rechaza con vault desconocido (no toca disco)", async () => {
     writeConfig({ connections: [{ vault: "/v/a", name: "A", openedAt: "x" }], lastVault: "/v/a" });
     await expect(searchVault("hola", 5, undefined, "NoExiste")).rejects.toThrow(/vault desconocido/i);
+  });
+
+  test("pathPrefix en modo local filtra por prefijo", async () => {
+    writeConfig({ connections: [{ vault: repo, name: "A", openedAt: "x" }], lastVault: repo });
+    writeFileSync(join(repo, "a.md"), "# oracle\nalpha", "utf8");
+    mkdirSync(join(repo, "01 - Proyectos"), { recursive: true });
+    writeFileSync(join(repo, "01 - Proyectos/b.md"), "# other\noracle beta", "utf8");
+
+    const hits = await searchVault("oracle", 10, "01 - Proyectos/", "A");
+    expect(hits.map((h) => h.path)).toEqual(["01 - Proyectos/b.md"]);
   });
 });

@@ -180,10 +180,10 @@ const server = Bun.serve({
       return json(syncSince(vault, since));
     }
 
-    // --- Búsqueda full-text: GET /search?q=... ---
+    // --- Búsqueda full-text: GET /search?q=...&prefix=... ---
     if (pathname === "/search" && req.method === "GET") {
       const q = url.searchParams.get("q") ?? "";
-      return json({ results: searchDocs(vault, q) });
+      return json({ results: searchDocs(vault, q, url.searchParams.get("prefix") || undefined) });
     }
 
     // --- Papelera: GET /trash (listar) ---
