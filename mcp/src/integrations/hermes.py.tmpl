@@ -182,7 +182,6 @@ def _roots_in_text(text: str) -> List[Hit]:
             seen.add(r)
             hits.append((r, "path"))
     normalized = _norm(text or "")
-    has_context = bool(NAME_CONTEXT_RE.search(normalized))
     for rx, root, term, ambiguous in _repo_index():
         if root in seen:
             continue
@@ -190,7 +189,10 @@ def _roots_in_text(text: str) -> List[Hit]:
         if not m:
             continue
         quoted = normalized[max(0, m.start() - 1):m.start()] == "`" and normalized[m.end():m.end() + 1] == "`"
-        if ambiguous and not (has_context or quoted):
+        # El contexto tiene que estar cerca del nombre: "retomar el proyecto goblin" sí; en
+        # "se aflojó el bulón de la rueda … el proyecto goblin", "proyecto" no habla del bulón.
+        near = re.findall(r"[\w-]+", normalized[:m.start()])[-4:] + re.findall(r"[\w-]+", normalized[m.end():])[:2]
+        if ambiguous and not (quoted or NAME_CONTEXT_RE.search(" ".join(near))):
             continue
         seen.add(root)
         hits.append((root, f"name:{term}"))

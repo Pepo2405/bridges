@@ -65,6 +65,9 @@ class T(unittest.TestCase):
         self.assertEqual(pre("a5", "sigamos con el repo forge"), {"context": "CTX:startup:forge"})
         self.assertEqual(pre("a6", "mirá `goblin`"), {"context": "CTX:startup:goblin"})
         self.assertEqual(pre("a7", "en el proyecto Bulón, los turnos"), {"context": "CTX:startup:bulon"})
+        # Caso real (telemetría del 29/10): "proyecto" habla de goblin, no del bulón.
+        self.assertEqual(pre("a8", "se aflojó el bulón de la rueda del auto, y quiero retomar el proyecto goblin"),
+                         {"context": "CTX:startup:goblin"})
 
     def test_resultado_json_sigue_siendo_json(self):
         r = transform("s13", "patch", {"path": str(HOME / "code/goblin/a")}, result='{"success": true, "diff": "x"}')
