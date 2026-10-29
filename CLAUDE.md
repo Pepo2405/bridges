@@ -15,7 +15,10 @@ papelera). El identifier histórico del repo sigue siendo "forge".
 - `client/` — app de escritorio (Tauri).
 - `.claude-plugin/` — manifiestos del plugin (`plugin.json`, `marketplace.json`) y
   `launch.sh` (launcher del MCP).
-- `commands/`, `agents/`, `skills/` — piezas del plugin.
+- `commands/`, `agents/`, `skills/`, `hooks/` — piezas del plugin. `hooks/hooks.json`
+  corre `launch.sh hook session-start` (contexto de memoria del proyecto).
+- `docs/memoria-agentes.md` — protocolo de memoria (Decisiones + Bitácora) para agentes;
+  tools `project_context` / `save_decision` / `log_session` en `mcp/src/memory.ts`.
 
 ## MCP: multi-vault, mono-vault-por-proceso
 

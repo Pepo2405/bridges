@@ -27,6 +27,8 @@ Las tools pueden correr de dos formas:
   `snippet` (30 tokens) y —en modo local— la ruta **absoluta local** del `.md`.
   `pathPrefix` filtra a notas cuyo path empieza con ese prefijo (p. ej.
   `'01 - Proyectos/'`). Ya viene ordenado por relevancia: usalo en vez de grepear.
+  Exige todos los términos; si ninguna nota los tiene a todos, reintenta con cualquiera
+  (OR) y BM25 pone primero las que matchean más.
 - **`read_note(path, vault?)`** — devuelve el **contenido completo** de una nota por su path
   relativo. En modo local lo lee del disco (con guard anti-traversal); en modo HTTP
   lo trae de `/sync`. Cierra el agujero de que en HTTP el agente solo veía el snippet.
@@ -34,6 +36,31 @@ Las tools pueden correr de dos formas:
   `[[wikilinks]]`). El diferencial sobre grep: navegás el grafo, no el texto.
 - **`list_links(path, vault?)`** — lista las notas a las que `path` **enlaza**, marcando los
   links rotos (sin nota destino).
+
+### Memoria de agentes (Decisiones + Bitácora)
+
+El equivalente de Engram sobre el vault: lo que el agente aprende queda en
+`<folder>/Decisiones/<Tema>.md` (una nota por tema) y el handoff de cada sesión en
+`<folder>/Bitácora/<fecha> - <tema>.md`, en la carpeta que declara el `.bridges` del repo.
+Protocolo completo para agentes: [`docs/memoria-agentes.md`](../docs/memoria-agentes.md).
+
+- **`project_context(cwd?, vault?, folder?)`** — Decisiones vigentes (marca las vencidas
+  según `revisar_despues`, omite las reemplazadas) y próximos pasos de la última Bitácora.
+- **`save_decision(topic, tipo?, que?, porque?, donde?, aprendido?, cambio?, reemplaza?, cwd?, vault?, folder?)`**
+  — upsert por tema (nombre normalizado sin mayúsculas ni acentos). Arma el frontmatter
+  (`tipo/estado/actualizado/revisar_despues`), los campos Qué/Por qué/Dónde/Aprendido y la
+  línea de `## Cambios`; conserva el texto y las secciones que ya tenía la nota. Devuelve
+  `similares` (posibles duplicados). Write-tool.
+- **`log_session(tema, objetivo?, instrucciones?, descubrimientos?, hecho?, proximos?, archivos?, cwd?, vault?, folder?)`**
+  — crea o suma a la Bitácora del día. Write-tool.
+
+El proyecto se resuelve buscando `.bridges` en `cwd` (default: cwd del MCP) y sus padres,
+o con `vault` + `folder` explícitos. Pasá `cwd` desde agentes que no corren en el repo.
+
+**Hook:** `bridges-mcp hook session-start` lee el JSON de SessionStart de Claude Code por
+stdin e imprime el contexto como `additionalContext` (con `source: "compact"`, además pide
+escribir la Bitácora). El plugin lo registra en `hooks/hooks.json`. Sin `.bridges` no
+imprime nada.
 
 ### Escritura (Fase 0, local-only)
 
