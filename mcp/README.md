@@ -75,8 +75,10 @@ Si el MCP arranca en modo local y `BRIDGES_MCP_READONLY` != `1`, registra ademá
 - **`list_history(path, vault?)`** — snapshots + papelera de una nota.
 
 Toda op destructiva es recuperable: snapshots en `.bridges/history/` (máx. 50 por nota)
-y borrados en `.bridges/trash/`. Ambos excluidos del índice (dotdir). `BRIDGES_MCP_READONLY=1`
-apaga la escritura; `BRIDGES_MCP_DEFAULT_FOLDER` cambia la carpeta default (fallback `Memoria`).
+y borrados en `.bridges/trash/`. Ambos excluidos del índice (dotdir). Las write-tools
+rechazan paths bajo `.bridges/` (la red de undo), `.git/` y `.obsidian/`.
+`BRIDGES_MCP_READONLY=1` apaga la escritura; `BRIDGES_MCP_DEFAULT_FOLDER` cambia la
+carpeta default (fallback `Memoria`).
 
 ### Multi-vault (`vault?`)
 

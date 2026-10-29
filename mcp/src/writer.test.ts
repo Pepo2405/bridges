@@ -90,6 +90,27 @@ describe("createNote", () => {
     expect(r.path).toBe("Journal/log.md");
   });
 
+  test("sin folder usa BRIDGES_MCP_DEFAULT_FOLDER", () => {
+    process.env.BRIDGES_MCP_DEFAULT_FOLDER = "Diario";
+    try {
+      const r = createNote(dir, { title: "Log", content: "x" });
+      expect(r.path).toBe("Diario/log.md");
+      expect(existsSync(join(dir, r.path))).toBe(true);
+    } finally {
+      delete process.env.BRIDGES_MCP_DEFAULT_FOLDER;
+    }
+  });
+
+  test("folder vacío en env cae a Memoria", () => {
+    process.env.BRIDGES_MCP_DEFAULT_FOLDER = "   ";
+    try {
+      const r = createNote(dir, { title: "Log", content: "x" });
+      expect(r.path).toBe("Memoria/log.md");
+    } finally {
+      delete process.env.BRIDGES_MCP_DEFAULT_FOLDER;
+    }
+  });
+
   test("colisión sin overwrite lanza con el path existente", () => {
     createNote(dir, { title: "T", content: "v1", path: "n" });
     expect(() => createNote(dir, { title: "T", content: "v2", path: "n" })).toThrow(/ya existe/i);
@@ -101,6 +122,30 @@ describe("createNote", () => {
     expect(r.action).toBe("created");
     expect(readFileSync(join(dir, "n.md"), "utf8")).toBe("v2");
     expect(readdirSync(historyDir(dir, "n.md")).length).toBe(1); // snapshot de v1
+  });
+});
+
+describe("rutas internas", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bridges-w-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  test("create/update/delete rechazan .bridges (case-insensitive)", () => {
+    expect(() => createNote(dir, { title: "X", content: "x", path: ".bridges/history/x.md" })).toThrow(/internas/i);
+    expect(() => createNote(dir, { title: "X", content: "x", folder: ".Bridges" })).toThrow(/internas/i);
+    writeFileSync(join(dir, "n.md"), "x", "utf8");
+    expect(() => updateNote(dir, { path: ".bridges/history/n.md", mode: "overwrite", content: "x" })).toThrow(/internas/i);
+    expect(() => deleteNote(dir, ".bridges/trash/manifest.jsonl")).toThrow(/internas/i);
+    expect(existsSync(join(dir, "n.md"))).toBe(true); // no se tocó nada
+  });
+
+  test("rechaza .git y .obsidian", () => {
+    expect(() => createNote(dir, { title: "X", content: "x", path: ".git/hooks/x.md" })).toThrow(/internas/i);
+    expect(() => createNote(dir, { title: "X", content: "x", path: ".obsidian/x.md" })).toThrow(/internas/i);
+  });
+
+  test("restore rechaza un destino interno", () => {
+    expect(() => restoreNote(dir, { path: ".bridges/trash/x.md", from: "history" })).toThrow(/internas/i);
   });
 });
 
@@ -251,6 +296,33 @@ describe("restoreNote / listHistory", () => {
     const r = restoreNote(dir, { path: "n.md" });
     expect(r).toMatchObject({ action: "restored", source: "trash" });
     expect(readFileSync(join(dir, "n.md"), "utf8")).toBe("data");
+  });
+
+  test("restaurar desde trash limpia la copia y su entrada del manifest", () => {
+    createNote(dir, { title: "T", content: "data", path: "sub/n" });
+    deleteNote(dir, "sub/n.md", 1000);
+    const entry = listHistory(dir, "sub/n.md").find((e) => e.kind === "trash")!;
+    expect(existsSync(join(dir, entry.ref))).toBe(true);
+
+    restoreNote(dir, { path: "sub/n.md" });
+
+    expect(existsSync(join(dir, entry.ref))).toBe(false);
+    expect(listHistory(dir, "sub/n.md").some((e) => e.kind === "trash")).toBe(false);
+    // Sin otra versión, ya no hay nada que restaurar (antes fallaba con "ya existe").
+    expect(() => restoreNote(dir, { path: "sub/n.md" })).toThrow(/nada que restaurar/i);
+  });
+
+  test("restaurar una nota no borra el trash de las otras", () => {
+    createNote(dir, { title: "A", content: "a", path: "a" });
+    createNote(dir, { title: "B", content: "b", path: "b" });
+    deleteNote(dir, "a.md", 1000);
+    deleteNote(dir, "b.md", 2000);
+
+    restoreNote(dir, { path: "a.md" });
+
+    const bTrash = listHistory(dir, "b.md").find((e) => e.kind === "trash");
+    expect(bTrash).toBeDefined();
+    expect(existsSync(join(dir, bTrash!.ref))).toBe(true);
   });
 
   test("revierte una edición desde history (from:history)", () => {

@@ -288,13 +288,14 @@ if (isLocalMode() && process.env.BRIDGES_MCP_READONLY !== "1") {
       title: "Crear una nota en el vault",
       description:
         "Crea una nota nueva. Con `path` la ubica ahí (agrega .md); sin `path`, usa " +
-        "el slug del `title` dentro de `folder` (default 'Memoria'). Si ya existe y no " +
+        "el slug del `title` dentro de `folder` (default BRIDGES_MCP_DEFAULT_FOLDER o " +
+        "'Memoria'). Si ya existe y no " +
         "pasás overwrite:true, falla. Devuelve JSON con el path creado y links rotos.",
       inputSchema: {
         title: z.string().min(1).describe("Título de la nota (se usa para el slug si no hay path)."),
         content: z.string().describe("Contenido markdown del cuerpo."),
         path: z.string().optional().describe("Ruta relativa destino (sin .md o con .md)."),
-        folder: z.string().optional().describe("Carpeta destino si no hay path (default 'Memoria')."),
+        folder: z.string().optional().describe("Carpeta destino si no hay path (default BRIDGES_MCP_DEFAULT_FOLDER o 'Memoria')."),
         overwrite: z.boolean().optional().describe("Si true, reemplaza una nota existente en ese path."),
         vault: vaultArg,
       },

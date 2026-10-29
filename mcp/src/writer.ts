@@ -4,9 +4,9 @@
  * Local-only: nunca habla HTTP. Ver docs/superpowers/specs/2026-07-06-mcp-write-fase0-design.md
  */
 import {
-  readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, renameSync, existsSync, appendFileSync,
+  readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, renameSync, existsSync, appendFileSync, rmdirSync,
 } from "node:fs";
-import { join, dirname, relative } from "node:path";
+import { join, dirname, relative, sep } from "node:path";
 import { deriveTitle } from "../../server/src/search-common";
 import { resolveInVault } from "./bridges";
 
@@ -29,6 +29,28 @@ export function slug(title: string): string {
 export function historyDir(vaultDir: string, relPath: string): string {
   const safeRel = relative(vaultDir, resolveInVault(vaultDir, relPath));
   return join(vaultDir, VAULT_INTERNAL, "history", safeRel);
+}
+
+/** Directorios internos del vault que las write-tools nunca deben tocar. */
+const PROTECTED_DIRS: Record<string, true> = {
+  [VAULT_INTERNAL]: true,
+  ".git": true,
+  ".obsidian": true,
+};
+
+/**
+ * Resuelve un path de escritura dentro del vault y rechaza directorios internos.
+ * `.bridges/` es la red de undo del propio MCP: si una tool pudiera escribir ahí,
+ * el agente podría borrar sus snapshots y quedarse sin rollback. Case-insensitive
+ * porque APFS/Windows no distinguen `.bridges` de `.Bridges`.
+ */
+function resolveWritable(vaultDir: string, relPath: string): string {
+  const abs = resolveInVault(vaultDir, relPath);
+  const first = relative(vaultDir, abs).split(/[\\/]/)[0]?.toLowerCase() ?? "";
+  if (!first || PROTECTED_DIRS[first]) {
+    throw new Error(`no se puede escribir en rutas internas del vault: "${relPath}"`);
+  }
+  return abs;
 }
 
 /** Resultado de una operación de escritura. */
@@ -77,8 +99,8 @@ export function createNote(
 ): WriteResult {
   const rel = args.path
     ? (args.path.endsWith(".md") ? args.path : `${args.path}.md`)
-    : join(args.folder || "Memoria", `${slug(args.title)}.md`);
-  const abs = resolveInVault(vaultDir, rel);
+    : join(args.folder || process.env.BRIDGES_MCP_DEFAULT_FOLDER?.trim() || "Memoria", `${slug(args.title)}.md`);
+  const abs = resolveWritable(vaultDir, rel);
   if (existsSync(abs) && !args.overwrite) {
     throw new Error(`ya existe una nota en "${rel}" (pasá overwrite:true para reemplazar).`);
   }
@@ -131,7 +153,7 @@ export function updateNote(
   args: { path: string; mode: "overwrite" | "append" | "patch"; content: string; heading?: string },
 ): WriteResult {
   const rel = args.path;
-  const abs = resolveInVault(vaultDir, rel);
+  const abs = resolveWritable(vaultDir, rel);
   if (!existsSync(abs)) throw new Error(`no existe la nota "${rel}".`);
   let next: string;
   if (args.mode === "overwrite") {
@@ -154,7 +176,7 @@ export function updateNote(
 }
 
 export function deleteNote(vaultDir: string, relPath: string, now: number = Date.now()): DeleteResult {
-  const abs = resolveInVault(vaultDir, relPath);
+  const abs = resolveWritable(vaultDir, relPath);
   if (!existsSync(abs)) throw new Error(`no existe la nota "${relPath}".`);
   const ts = stamp(now);
   const safeRel = relative(vaultDir, abs); // sanitizado: mismo enfoque anti-traversal que historyDir
@@ -167,7 +189,7 @@ export function deleteNote(vaultDir: string, relPath: string, now: number = Date
   const trashAbs = resolveInVault(vaultDir, trashRel);
   mkdirSync(dirname(trashAbs), { recursive: true });
   renameSync(abs, trashAbs);
-  const manifestAbs = join(vaultDir, VAULT_INTERNAL, "trash", "manifest.jsonl");
+  const manifestAbs = manifestPath(vaultDir);
   mkdirSync(dirname(manifestAbs), { recursive: true });
   appendFileSync(manifestAbs, JSON.stringify({ path: relPath, trashPath: trashRel, ts }) + "\n", "utf8");
   return { path: relPath, action: "trashed", trashPath: trashRel };
@@ -180,11 +202,42 @@ export type HistoryEntry = { kind: "history" | "trash"; ts: string; ref: string 
 
 type TrashRec = { path: string; trashPath: string; ts: string };
 
-/** Lee el manifest de trash (una entrada JSON por línea). [] si no existe aún. */
+/** Ruta del manifest de trash (una entrada JSON por línea). */
+function manifestPath(vaultDir: string): string {
+  return join(vaultDir, VAULT_INTERNAL, "trash", "manifest.jsonl");
+}
+
+/** Reescribe el manifest de forma atómica; sin entradas, lo elimina. */
+function writeManifest(vaultDir: string, records: TrashRec[]): void {
+  const p = manifestPath(vaultDir);
+  if (!records.length) {
+    rmSync(p, { force: true });
+    return;
+  }
+  mkdirSync(dirname(p), { recursive: true });
+  const tmp = `${p}.tmp`;
+  writeFileSync(tmp, records.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+  renameSync(tmp, p);
+}
+
+/** Lee el manifest de trash. [] si no existe aún. */
 function readManifest(vaultDir: string): TrashRec[] {
-  const p = join(vaultDir, VAULT_INTERNAL, "trash", "manifest.jsonl");
+  const p = manifestPath(vaultDir);
   if (!existsSync(p)) return [];
   return readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as TrashRec);
+}
+
+/** Borra directorios vacíos desde `dir` hacia arriba, sin tocar `stop`. */
+function removeEmptyDirsUpTo(dir: string, stop: string): void {
+  let cur = dir;
+  while (cur !== stop && cur.startsWith(stop + sep)) {
+    try {
+      rmdirSync(cur);
+    } catch {
+      return; // no está vacío (u otro error): no seguir subiendo
+    }
+    cur = dirname(cur);
+  }
 }
 
 /** Snapshots de history + entradas de trash de una nota, ordenados por ts. */
@@ -216,8 +269,9 @@ export function restoreNote(
   args: { path: string; from?: "trash" | "history"; timestamp?: string },
 ): RestoreResult {
   const rel = args.path;
-  const abs = resolveInVault(vaultDir, rel); // destino: siempre vía resolveInVault
-  const trash = readManifest(vaultDir).filter((r) => r.path === rel);
+  const abs = resolveWritable(vaultDir, rel); // destino: siempre vía resolveWritable
+  const manifest = readManifest(vaultDir);
+  const trash = manifest.filter((r) => r.path === rel);
   const wantTrash = args.from === "trash" || (!args.from && trash.length > 0);
   if (wantTrash) {
     const rec = args.timestamp ? trash.find((r) => r.ts === args.timestamp) : trash[trash.length - 1];
@@ -226,7 +280,16 @@ export function restoreNote(
       throw new Error(`ya existe una nota en "${rel}"; no se puede restaurar desde trash sin pisarla.`);
     }
     const src = resolveInVault(vaultDir, rec.trashPath); // fuente también vía resolveInVault
+    const trashRoot = join(vaultDir, VAULT_INTERNAL, "trash");
+    // Defensa extra: una entrada de manifest corrupta no debe poder leer/borrar
+    // un archivo fuera de la papelera.
+    if (!src.startsWith(trashRoot + sep)) throw new Error(`entrada de trash inválida: "${rec.trashPath}"`);
     writeFileEnsured(abs, readFileSync(src, "utf8"));
+    // La nota ya está viva: su copia en trash no es una versión recuperable
+    // distinta y su entrada quedaría stale en list_history. Se limpia.
+    writeManifest(vaultDir, manifest.filter((r) => r.trashPath !== rec.trashPath));
+    rmSync(src, { force: true });
+    removeEmptyDirsUpTo(dirname(src), trashRoot);
     return { path: rel, action: "restored", source: "trash" };
   }
   const hdir = historyDir(vaultDir, rel);
