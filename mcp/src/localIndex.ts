@@ -17,7 +17,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { toMatchQuery, deriveTitle, FTS_TOKENIZER } from "../../server/src/search-common";
+import { searchAndThenOr, deriveTitle, FTS_TOKENIZER } from "../../server/src/search-common";
 import type { SearchHit } from "./bridges";
 
 // Pesos BM25 por columna (title, path, content), idénticos a search.ts del server.
@@ -89,13 +89,12 @@ function sweep(vaultDir: string) {
   }
 }
 
-/** Búsqueda full-text contra el índice local, manteniéndolo fresco antes de consultar. */
+/** Búsqueda full-text contra el índice local, manteniéndolo fresco antes de consultar.
+ *  AND de todos los términos; si no hay resultados, OR (ver searchAndThenOr). */
 export function searchLocal(vaultDir: string, query: string, limit: number): SearchHit[] {
   if (!db) init();
   sweep(vaultDir);
-  const match = toMatchQuery(query);
-  if (!match) return [];
-  const rows = qSearch.all(match, limit) as Row[];
+  const rows = searchAndThenOr(query, (match) => qSearch.all(match, limit) as Row[]);
   return rows.map((r) => ({
     path: r.path,
     title: r.title,

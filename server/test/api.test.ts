@@ -578,6 +578,11 @@ describe("búsqueda FTS5 (ranking, snippets, borrados)", () => {
     expect((await search("kuber")).map((h) => h.path)).toContain("relevante.md");
   });
 
+  test("sin match de todos los términos, cae a OR", async () => {
+    const paths = (await search("kubernetes inexistentezz")).map((h) => h.path);
+    expect(paths[0]).toBe("relevante.md");
+  });
+
   test("insensible a acentos: 'mitocondria' encuentra 'mitocondría'", async () => {
     expect((await search("mitocondria")).map((h) => h.path)).toContain("acentos.md");
   });

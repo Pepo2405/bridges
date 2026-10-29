@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { toMatchQuery } from "./search-common";
+import { searchAndThenOr } from "./search-common";
 
 export type SearchHit = {
   id: string;
@@ -26,9 +26,8 @@ const qSearch = db.query<
    LIMIT 50`,
 );
 
-/** Búsqueda full-text (FTS5/BM25) sobre el índice de un vault. */
+/** Búsqueda full-text (FTS5/BM25) sobre el índice de un vault. AND de todos los
+ *  términos; si no hay resultados, OR (ver searchAndThenOr). */
 export function searchDocs(vault: string, query: string): SearchHit[] {
-  const match = toMatchQuery(query);
-  if (!match) return [];
-  return qSearch.all(match, vault);
+  return searchAndThenOr(query, (match) => qSearch.all(match, vault));
 }

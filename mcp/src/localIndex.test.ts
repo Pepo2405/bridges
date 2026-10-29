@@ -71,6 +71,21 @@ test("prefix-match: 'kuber' encuentra 'kubernetes'", () => {
   expect(paths("kuber")).toContain("k.md");
 });
 
+test("si ninguna nota tiene TODOS los términos, cae a OR rankeado por BM25", () => {
+  write("plano.md", "# Plano de mesas\nel plano de mesas del salón");
+  write("solo-plano.md", "# Otra\nun plano suelto");
+  // "inexistente" no está en ningún doc: con AND puro no habría resultados.
+  const hits = paths("plano mesas inexistente");
+  expect(hits[0]).toBe("plano.md"); // matchea más términos → rankea primero
+  expect(hits).toContain("solo-plano.md");
+});
+
+test("con AND alcanza, no agrega los matches parciales", () => {
+  write("ambos.md", "# Ambos\nzorro azul");
+  write("uno.md", "# Uno\nzorro rojo");
+  expect(paths("zorro azul")).toEqual(["ambos.md"]);
+});
+
 test("insensible a acentos: 'mitocondria' encuentra 'mitocondría'", () => {
   write("bio.md", "# Biología\nla mitocondría produce energía");
   expect(paths("mitocondria")).toContain("bio.md");
